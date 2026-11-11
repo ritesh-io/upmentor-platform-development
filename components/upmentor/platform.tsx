@@ -58,9 +58,18 @@ function progressOf(roadmap?: Roadmap) {
 export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = false }: { role: Role; mode?: "demo" | "authenticated"; sessionUser?: { id: string; name: string; email: string }; showAdminSetup?: boolean }) {
   const demoMode = mode === "demo"
   const sampleUser = seedDemoData.users.find((user) => user.role === role)!
+  const accountUser: UserProfile = !demoMode && sessionUser
+    ? {
+        ...sampleUser,
+        id: sessionUser.id,
+        name: sessionUser.name,
+        email: sessionUser.email,
+        ...(role === "mentee" ? { domain: "Web Development", skills: [], availabilityHours: 4, weeklyCapacity: 8, learningGoal: "", level: "Beginner", targetDate: undefined, cohortId: undefined } : {}),
+      }
+    : sampleUser
   const initialData: DemoData = demoMode || !sessionUser ? seedDemoData : {
     ...seedDemoData,
-    users: [...seedDemoData.users.filter((user) => user.role !== role), { ...sampleUser, id: sessionUser.id, name: sessionUser.name, email: sessionUser.email }],
+    users: [...seedDemoData.users.filter((user) => user.role !== role), accountUser],
   }
   const [data, setData] = useState<DemoData>(initialData)
   const [ready, setReady] = useState(false)
@@ -73,8 +82,33 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
 
   useEffect(() => {
     if (!demoMode) {
-      setReady(true)
-      return
+      if (role !== "mentee") {
+        setReady(true)
+        return
+      }
+      let active = true
+      fetch("/api/mentee-profile", { cache: "no-store" })
+        .then(async (response) => {
+          const result = await response.json()
+          if (!response.ok) throw new Error(result.error || "Your learning profile could not be loaded.")
+          return result
+        })
+        .then((result) => {
+          if (!active || !result.profile || !result.roadmap) return
+          setData((old) => ({
+            ...old,
+            users: [...old.users.filter((user) => user.id !== result.profile.id), result.profile],
+            roadmaps: [...old.roadmaps.filter((roadmap) => roadmap.studentId !== result.profile.id), result.roadmap],
+          }))
+          setRoadmapSource(result.source === "ai" ? "ai" : "simulated")
+        })
+        .catch((error) => {
+          if (active) setMessage(error instanceof Error ? error.message : "Your learning profile could not be loaded.")
+        })
+        .finally(() => {
+          if (active) setReady(true)
+        })
+      return () => { active = false }
     }
     try {
       const saved = window.localStorage.getItem(DEMO_STORAGE_KEY)
@@ -92,7 +126,7 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
     }
     window.addEventListener("storage", sync)
     return () => window.removeEventListener("storage", sync)
-  }, [demoMode])
+  }, [demoMode, role])
 
   useEffect(() => {
     if (!ready || !demoMode) return
@@ -142,14 +176,37 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
       const parsed = roadmapContentSchema.safeParse(result.content)
       if (response.ok && result.source === "ai" && parsed.success) { source = "ai"; content = parsed.data }
     } catch { source = "simulated" }
+    let savedProfile = updated
+    let savedRoadmap: Roadmap | undefined
+    if (!demoMode) {
+      try {
+        const response = await fetch("/api/mentee-profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile: { goal: updated.learningGoal, domain: updated.domain, level: updated.level, skills: updated.skills, weeklyHours: updated.availabilityHours, targetDate: updated.targetDate },
+            content: content ?? null,
+          }),
+        })
+        const result = await response.json()
+        if (!response.ok || !result.profile || !result.roadmap) throw new Error(result.error || "Your learning profile could not be saved.")
+        savedProfile = result.profile as UserProfile
+        savedRoadmap = result.roadmap as Roadmap
+        source = result.source === "ai" ? "ai" : "simulated"
+      } catch (error) {
+        setGeneratingRoadmap(false)
+        setMessage(error instanceof Error ? error.message : "Your learning profile could not be saved. Please try again.")
+        return
+      }
+    }
     setData((old) => {
       const existing = old.roadmaps.find((item) => item.studentId === profile.id) || previous
-      const roadmap = content ? makeRoadmapFromGenerated(updated, content, existing) : makePersonalizedRoadmap(updated, existing)
-      return { ...old, users: old.users.map((user) => user.id === profile.id ? updated : user), roadmaps: [...old.roadmaps.filter((item) => item.studentId !== profile.id), roadmap] }
+      const roadmap = savedRoadmap || (content ? makeRoadmapFromGenerated(updated, content, existing) : makePersonalizedRoadmap(updated, existing))
+      return { ...old, users: old.users.map((user) => user.id === profile.id ? savedProfile : user), roadmaps: [...old.roadmaps.filter((item) => item.studentId !== profile.id), roadmap] }
     })
     setRoadmapSource(source)
     setSection("roadmap")
-    setMessage(source === "ai" ? "AI-generated roadmap ready. Review your milestones and recommended resources." : "A personalized demo roadmap is ready. AI is unavailable, so the built-in planner was used.")
+    setMessage(!demoMode ? "Your learning profile and roadmap were saved to your account." : source === "ai" ? "AI-generated roadmap ready. Review your milestones and recommended resources." : "A personalized demo roadmap is ready. AI is unavailable, so the built-in planner was used.")
     setGeneratingRoadmap(false)
   }
 
@@ -338,11 +395,11 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
   return <div className="min-h-screen bg-[#f7f8fc] text-[#172033]">
     <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r border-[#e8eaf1] bg-white lg:flex"><div className="flex h-[68px] items-center border-b border-[#eef0f5] px-6"><Brand/></div>{demoMode && <div className="px-4 pt-5"><label className="sr-only" htmlFor="demo-account">Demo account</label><select id="demo-account" className={`${inputClass} px-2.5 text-xs`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></div>}<nav aria-label="Main navigation" className="flex-1 px-3 pt-7"><p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[.13em] text-[#a0a6b5]">Workspace</p>{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} aria-current={section === item.id ? "page" : undefined} className={`mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition ${section === item.id ? "bg-[#f0efff] text-[#4f46e5]" : "text-[#697386] hover:bg-[#f7f8fc] hover:text-[#172033]"}`}><item.icon size={17}/>{item.label}{item.id === "notifications" && unreadCount > 0 && <span className="ml-auto rounded-full bg-[#fff2df] px-1.5 py-0.5 text-[10px] text-[#ba740e]">{unreadCount}</span>}</button>)}</nav><div className="border-t border-[#eef0f5] p-4">{demoMode ? <><div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Demo mode</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Changes are saved in this browser.</p></div><Link href="/demo" className="mt-3 flex items-center gap-2 px-2 text-xs text-[#778094]"><CircleHelp size={15}/> Switch role</Link></> : <div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Authenticated workspace</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Sample dashboard records are not linked to your account yet.</p>{role === "admin" && <Link href="/admin/mentor-invitations" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Invite a mentor</Link>}{showAdminSetup && <Link href="/setup-admin" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Initialize program admin</Link>}</div>}</div></aside>
     <div className="lg:pl-[248px]"><header className="sticky top-0 z-10 flex min-h-[68px] items-center justify-between gap-3 border-b border-[#e8eaf1] bg-white/95 px-4 backdrop-blur sm:px-8"><div><p className="text-[10px] text-[#9198a8]">{roleMeta[role].title}</p><p className="mt-0.5 text-sm font-semibold text-[#344054]">{title}</p></div><div className="flex items-center gap-2">{demoMode && <><label className="sr-only" htmlFor="mobile-account">Choose demo account</label><select id="mobile-account" className={`${inputClass} max-w-[150px] px-2 py-2 text-xs lg:hidden`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></>}{demoMode ? <Link href="/demo" className={quietButton}>Switch role</Link> : <button type="button" onClick={handleSignOut} className={quietButton}>Sign out</button>}<ThemeToggle/><span className="grid size-8 place-items-center rounded-full bg-[#f0efff] text-[10px] font-semibold text-[#4f46e5]">{currentUser.name.split(" ").map((part) => part[0]).join("")}</span></div></header>
-    <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8 sm:py-8"><div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1.5 text-[10px] font-medium text-[#8b92a3]">TechNeeds IGDTUW <span className="mx-1">·</span> {demoMode ? "Sample workspace" : "Authenticated role"}</p><h1 className="text-2xl font-semibold tracking-[-.04em] sm:text-[28px]">{pageTitle}, {currentUser.name.split(" ")[0]}<span className="text-[#4f46e5]">.</span></h1><p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#778094]">{role === "mentee" ? "Your goals, learning plan, sessions, and mentor feedback—connected in one place." : role === "mentor" ? "Support your assigned students, turn sessions into next steps, and review work." : "Manage the people, cohorts, and assignments that move your mentorship program forward."}</p></div><span className="rounded-full border border-[#e6e5ff] bg-[#fafaff] px-3 py-1.5 text-[10px] font-semibold text-[#5a52e8]">{demoMode ? "Fictional demo profiles · saved in this browser" : "Sample records · not saved to this account"}</span></div>
+    <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8 sm:py-8"><div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1.5 text-[10px] font-medium text-[#8b92a3]">TechNeeds IGDTUW <span className="mx-1">·</span> {demoMode ? "Sample workspace" : "Authenticated role"}</p><h1 className="text-2xl font-semibold tracking-[-.04em] sm:text-[28px]">{pageTitle}, {currentUser.name.split(" ")[0]}<span className="text-[#4f46e5]">.</span></h1><p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#778094]">{role === "mentee" ? "Your goals, learning plan, sessions, and mentor feedback—connected in one place." : role === "mentor" ? "Support your assigned students, turn sessions into next steps, and review work." : "Manage the people, cohorts, and assignments that move your mentorship program forward."}</p></div><span className="rounded-full border border-[#e6e5ff] bg-[#fafaff] px-3 py-1.5 text-[10px] font-semibold text-[#5a52e8]">{demoMode ? "Fictional demo profiles · saved in this browser" : role === "mentee" ? "Mentee profile · MongoDB-backed" : "Authenticated role · sample workflow data"}</span></div>
     <div className="mb-5 flex gap-2 overflow-x-auto pb-1 lg:hidden">{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} className={`${section === item.id ? "bg-[#4f46e5] text-white" : "border border-[#e5e7ef] bg-white text-[#697386]"} shrink-0 rounded-full px-3 py-2 text-[11px] font-semibold`}>{item.label}</button>)}</div>
-    {!demoMode && <div className="mb-4"><Notice>Signed in as {currentUser.email}. This dashboard is still using sample records; changes here are not saved to your account.</Notice></div>}
+    {!demoMode && <div className="mb-4"><Notice>{role === "mentee" ? `Signed in as ${currentUser.email}. Your onboarding profile and roadmap are saved in MongoDB; other workflow records in this view are sample data.` : `Signed in as ${currentUser.email}. This role view uses sample workflow records that are not saved to your account yet.`}</Notice></div>}
     {message && <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-[#dcefe7] bg-[#f1fbf6] px-3.5 py-2.5 text-xs text-[#27765e]" role="status">{message}<button className="font-semibold" onClick={() => setMessage("")}>Dismiss</button></div>}
-    {!ready && <Notice>Loading your saved demo workspace…</Notice>}
+    {!ready && <Notice>{demoMode ? "Loading your saved demo workspace…" : "Loading your account workspace…"}</Notice>}
     {ready && <>
       {section === "overview" && (role === "admin" ? <AdminOverview data={data} go={setSection}/> : <><Overview role={role} data={data} user={currentUser} roadmap={ownRoadmap} progress={progressOf(ownRoadmap)} completed={completedCount} total={allOwnTasks.length} sessions={activeSessions} mentees={menteeIds} unread={unreadCount} go={setSection}/>{role === "mentee" && <div className="mt-5"><LeaderboardCard data={data} currentUserId={currentUser.id}/></div>}</>)}
       {role === "mentee" && section === "roadmap" && <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,.75fr)]"><div className="flex flex-col gap-5"><Onboarding user={currentUser} roadmap={ownRoadmap} onSubmit={submitOnboarding} busy={generatingRoadmap} source={roadmapSource}/><RoadmapView roadmap={ownRoadmap} expanded={expandedStages} toggle={(id) => setExpandedStages((old) => old.includes(id) ? old.filter((item) => item !== id) : [...old, id])} goTasks={() => setSection("tasks")}/></div><div className="flex flex-col gap-5"><Card title="Your mentor">{assignedMentor ? <><p className="text-sm font-semibold">{assignedMentor.name}</p><p className="mt-1 text-xs text-[#778094]">{assignedMentor.domain} · {assignedMentor.skills.join(", ")}</p></> : <Empty>No mentor assigned yet.</Empty>}<button className={`${quietButton} mt-4 w-full`} onClick={() => setSection("sessions")}>View sessions <ArrowRight size={14}/></button></Card><Card title="Your goal"><p className="text-xs leading-5 text-[#586174]">{ownRoadmap?.goal || currentUser.learningGoal || "Complete onboarding to set a learning goal."}</p><p className="mt-3 text-[10px] text-[#9299a8]">Target date: {day(ownRoadmap?.targetDate || currentUser.targetDate || "")}</p></Card></div></div>}
@@ -360,7 +417,7 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
       {section === "community" && <CommunityHub user={currentUser} data={data} onToggleRsvp={toggleEventRsvp}/>}
       {role === "admin" && section === "notifications" && <Notifications notifications={ownNotifications} data={data} markRead={(id) => setData((old) => ({ ...old, notifications: old.notifications.map((item) => item.id === id ? { ...item, read: true } : item) }))}/>}
     </>}
-    <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e9f0] py-5 text-[10px] text-[#969dad]"><span>{demoMode ? "Fictional sample profiles and events · No live TechNeeds member records · Saved in this browser" : "Authenticated role · Fictional sample records only · Dashboard persistence is the next setup step"}</span>{demoMode && <button className="text-[#6d7485] underline" onClick={() => { if (window.confirm("Reset this browser’s demo data to the original sample?")) { window.localStorage.removeItem(DEMO_STORAGE_KEY); window.location.reload() } }}>Reset demo data</button>}</footer></main></div></div>
+    <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e9f0] py-5 text-[10px] text-[#969dad]"><span>{demoMode ? "Fictional sample profiles and events · No live TechNeeds member records · Saved in this browser" : role === "mentee" ? "Your profile and generated roadmap are saved to your account · Other workflow actions remain sample-only" : "Authenticated account · Dashboard workflow records remain sample-only"}</span>{demoMode && <button className="text-[#6d7485] underline" onClick={() => { if (window.confirm("Reset this browser’s demo data to the original sample?")) { window.localStorage.removeItem(DEMO_STORAGE_KEY); window.location.reload() } }}>Reset demo data</button>}</footer></main></div></div>
 }
 
 function Overview({ role, data, user, roadmap, progress, completed, total, sessions, mentees, unread, go }: { role: Role; data: DemoData; user: UserProfile; roadmap?: Roadmap; progress: number; completed: number; total: number; sessions: MentorshipSession[]; mentees: string[]; unread: number; go: (section: string) => void }) {
