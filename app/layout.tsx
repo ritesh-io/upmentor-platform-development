@@ -1,10 +1,11 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { UpMentorThemeProvider } from '@/components/upmentor/theme-provider'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'UpMentor — From mentorship sessions to measurable growth',
-  description: 'Turn disconnected mentorship sessions into personalized learning journeys. Give students a clear roadmap and help programs measure real progress.',
+  title: 'UpMentor for TechNeeds IGDTUW — Mentorship with momentum',
+  description: 'A TechNeeds-inspired mentorship workspace for learning roadmaps, mentor follow-ups, community resources, and transparent cohort analytics.',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -26,8 +27,11 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'light',
-  themeColor: '#f7f8fc',
+  colorScheme: 'light dark',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f7f8fc' },
+    { media: '(prefers-color-scheme: dark)', color: '#0d1420' },
+  ],
 }
 
 export default function RootLayout({
@@ -36,10 +40,12 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
-        {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        <UpMentorThemeProvider>
+          {children}
+          {process.env.NODE_ENV === 'production' && <Analytics />}
+        </UpMentorThemeProvider>
       </body>
     </html>
   )

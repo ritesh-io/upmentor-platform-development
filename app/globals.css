@@ -52,3 +52,96 @@ body { margin: 0; background: var(--background); color: var(--foreground); font-
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 ::selection { background: #e3e1ff; color: #312e81; }
+
+html.dark {
+  color-scheme: dark;
+  --background: #0d1420;
+  --foreground: #e6edf7;
+  --card: #151e2b;
+  --card-foreground: #e6edf7;
+  --primary: #8b85ef;
+  --primary-foreground: #ffffff;
+  --secondary: #4dcab2;
+  --secondary-foreground: #0d1420;
+  --muted: #202b3a;
+  --muted-foreground: #a9b5c7;
+  --accent: #292b48;
+  --accent-foreground: #c3bfff;
+  --border: #344154;
+  --input: #344154;
+  --ring: #a5a0f5;
+}
+
+html.dark body { background: var(--background); color: var(--foreground); }
+html.dark .bg-white { background-color: #151e2b; }
+html.dark [class*="bg-white/"] { background-color: rgba(21, 30, 43, 0.96); }
+html.dark [class*="bg-[#f7f8fc]"],
+html.dark [class*="bg-[#f8f8fc]"],
+html.dark [class*="bg-[#f8f8fb]"],
+html.dark [class*="bg-[#fdfdff]"],
+html.dark [class*="bg-[#fcfcfe]"],
+html.dark [class*="bg-[#fafaff]"] { background-color: #0d1420; }
+html.dark [class*="bg-[#f0efff]"],
+html.dark [class*="bg-[#f1f0ff]"],
+html.dark [class*="bg-[#f3f2ff]"],
+html.dark [class*="bg-[#f5f5ff]"],
+html.dark [class*="bg-[#f8f8ff]"],
+html.dark [class*="bg-[#fbfaff]"] { background-color: #292b48; }
+html.dark [class*="bg-[#e9faf5]"],
+html.dark [class*="bg-[#e8f8f2]"],
+html.dark [class*="bg-[#e8f8f2]"] { background-color: #183a35; }
+html.dark [class*="bg-[#fff4e8]"],
+html.dark [class*="bg-[#fff3e3]"] { background-color: #3c3022; }
+html.dark [class*="bg-[#fff1ed]"] { background-color: #3b292a; }
+html.dark [class*="bg-[#f1f2f6]"],
+html.dark [class*="bg-[#f3f4f7]"],
+html.dark [class*="bg-[#eef0f5]"],
+html.dark [class*="bg-[#e8e8f2]"],
+html.dark [class*="bg-[#f2f3f7]"] { background-color: #202b3a; }
+html.dark [class*="border-[#"] { border-color: #344154; }
+html.dark [class*="divide-[#"] > :not([hidden]) ~ :not([hidden]) { border-color: #2c394c; }
+html.dark [class*="text-[#"] { color: #a9b5c7; }
+html.dark [class*="text-[#172033]"],
+html.dark [class*="text-[#344054]"],
+html.dark [class*="text-[#333d52]"],
+html.dark [class*="text-[#3c4559]"],
+html.dark [class*="text-[#475066]"],
+html.dark [class*="text-[#505a6e]"],
+html.dark [class*="text-[#596275]"],
+html.dark [class*="text-[#586174]"],
+html.dark [class*="text-[#697386]"],
+html.dark [class*="text-[#687084]"],
+html.dark [class*="text-[#626b7e]"],
+html.dark [class*="text-[#7d8597]"],
+html.dark [class*="text-[#778094]"],
+html.dark [class*="text-[#7e8799]"],
+html.dark [class*="text-[#828b9c]"],
+html.dark [class*="text-[#8991a2]"],
+html.dark [class*="text-[#8b92a3]"],
+html.dark [class*="text-[#8c93a3]"],
+html.dark [class*="text-[#8f96a6]"],
+html.dark [class*="text-[#9198a8]"],
+html.dark [class*="text-[#9299a8]"],
+html.dark [class*="text-[#969dad]"],
+html.dark [class*="text-[#969cad]"],
+html.dark [class*="text-[#9ba1af]"],
+html.dark [class*="text-[#9ca2b0]"],
+html.dark [class*="text-[#a0a6b5]"],
+html.dark [class*="text-[#a9adbd]"],
+html.dark [class*="text-[#b1b6c2]"] { color: #a9b5c7; }
+html.dark [class*="text-[#5a52e8]"],
+html.dark [class*="text-[#5550d6]"],
+html.dark [class*="text-[#5148d7]"],
+html.dark [class*="text-[#5752a4]"],
+html.dark [class*="text-[#5c55ce]"],
+html.dark [class*="text-[#5c55ce]"] { color: #bdb8ff; }
+html.dark [class*="text-[#14836d]"],
+html.dark [class*="text-[#159c83]"],
+html.dark [class*="text-[#168b75]"],
+html.dark [class*="text-[#27765e]"] { color: #7dd8bf; }
+html.dark [class*="text-[#a76b17]"],
+html.dark [class*="text-[#b97819]"],
+html.dark [class*="text-[#c27c22]"] { color: #edc17b; }
+html.dark [class*="text-[#c66054]"] { color: #f0998e; }
+html.dark [class*="placeholder:text-[#"]::placeholder { color: #7e8ba0; }
+html.dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.82); }
