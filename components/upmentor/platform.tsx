@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useState, type FormEvent, type ReactNode } from "react"
 import { Activity, ArrowRight, Bell, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, CircleHelp, ClipboardList, FileText, LayoutDashboard, Plus, Sparkles, Target, Users } from "lucide-react"
 import { Brand } from "./brand"
+import { authClient } from "@/lib/auth-client"
 import { CommunityHub } from "./community-hub"
 import { CohortManagement } from "./cohort-management"
 import { LearnerProfile, LeaderboardCard } from "./learner-profile"
@@ -54,17 +55,27 @@ function progressOf(roadmap?: Roadmap) {
   return tasks.length ? Math.round(tasks.filter((task) => task.status === "approved").length * 100 / tasks.length) : 0
 }
 
-export function Platform({ role }: { role: Role }) {
-  const [data, setData] = useState<DemoData>(seedDemoData)
+export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = false }: { role: Role; mode?: "demo" | "authenticated"; sessionUser?: { id: string; name: string; email: string }; showAdminSetup?: boolean }) {
+  const demoMode = mode === "demo"
+  const sampleUser = seedDemoData.users.find((user) => user.role === role)!
+  const initialData: DemoData = demoMode || !sessionUser ? seedDemoData : {
+    ...seedDemoData,
+    users: [...seedDemoData.users.filter((user) => user.role !== role), { ...sampleUser, id: sessionUser.id, name: sessionUser.name, email: sessionUser.email }],
+  }
+  const [data, setData] = useState<DemoData>(initialData)
   const [ready, setReady] = useState(false)
   const [section, setSection] = useState("overview")
-  const [accountId, setAccountId] = useState(roleMeta[role].userId)
+  const [accountId, setAccountId] = useState(demoMode ? roleMeta[role].userId : sessionUser?.id ?? roleMeta[role].userId)
   const [expandedStages, setExpandedStages] = useState<string[]>([])
   const [message, setMessage] = useState("")
   const [generatingRoadmap, setGeneratingRoadmap] = useState(false)
   const [roadmapSource, setRoadmapSource] = useState<"ai" | "simulated" | null>(null)
 
   useEffect(() => {
+    if (!demoMode) {
+      setReady(true)
+      return
+    }
     try {
       const saved = window.localStorage.getItem(DEMO_STORAGE_KEY)
       if (saved) {
@@ -81,12 +92,12 @@ export function Platform({ role }: { role: Role }) {
     }
     window.addEventListener("storage", sync)
     return () => window.removeEventListener("storage", sync)
-  }, [])
+  }, [demoMode])
 
   useEffect(() => {
-    if (!ready) return
+    if (!ready || !demoMode) return
     try { window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(data)) } catch { setMessage("Browser storage is unavailable. Changes will last for this session only.") }
-  }, [data, ready])
+  }, [data, ready, demoMode])
 
   const currentUser = data.users.find((user) => user.id === accountId && user.role === role) || data.users.find((user) => user.role === role)!
   const ownRoadmap = data.roadmaps.find((roadmap) => roadmap.studentId === currentUser.id)
@@ -101,6 +112,14 @@ export function Platform({ role }: { role: Role }) {
   const assignedMentor = data.users.find((user) => data.assignments.some((assignment) => assignment.studentId === currentUser.id && assignment.mentorId === user.id))
   const completedCount = ownRoadmap?.stages.flatMap((stage) => stage.tasks).filter((task) => task.status === "approved").length || 0
   const allOwnTasks = ownRoadmap?.stages.flatMap((stage) => stage.tasks) || []
+  const handleSignOut = async () => {
+    try {
+      await authClient.signOut()
+      window.location.assign("/sign-in")
+    } catch {
+      setMessage("Sign out could not be completed. Please try again.")
+    }
+  }
 
   const submitOnboarding = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -317,10 +336,11 @@ export function Platform({ role }: { role: Role }) {
   const nav = sections[role]
 
   return <div className="min-h-screen bg-[#f7f8fc] text-[#172033]">
-    <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r border-[#e8eaf1] bg-white lg:flex"><div className="flex h-[68px] items-center border-b border-[#eef0f5] px-6"><Brand/></div><div className="px-4 pt-5"><label className="sr-only" htmlFor="demo-account">Demo account</label><select id="demo-account" className={`${inputClass} px-2.5 text-xs`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></div><nav aria-label="Main navigation" className="flex-1 px-3 pt-7"><p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[.13em] text-[#a0a6b5]">Workspace</p>{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} aria-current={section === item.id ? "page" : undefined} className={`mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition ${section === item.id ? "bg-[#f0efff] text-[#4f46e5]" : "text-[#697386] hover:bg-[#f7f8fc] hover:text-[#172033]"}`}><item.icon size={17}/>{item.label}{item.id === "notifications" && unreadCount > 0 && <span className="ml-auto rounded-full bg-[#fff2df] px-1.5 py-0.5 text-[10px] text-[#ba740e]">{unreadCount}</span>}</button>)}</nav><div className="border-t border-[#eef0f5] p-4"><div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Demo mode</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Changes are saved in this browser.</p></div><Link href="/demo" className="mt-3 flex items-center gap-2 px-2 text-xs text-[#778094]"><CircleHelp size={15}/> Switch role</Link></div></aside>
-    <div className="lg:pl-[248px]"><header className="sticky top-0 z-10 flex min-h-[68px] items-center justify-between gap-3 border-b border-[#e8eaf1] bg-white/95 px-4 backdrop-blur sm:px-8"><div><p className="text-[10px] text-[#9198a8]">{roleMeta[role].title}</p><p className="mt-0.5 text-sm font-semibold text-[#344054]">{title}</p></div><div className="flex items-center gap-2"><label className="sr-only" htmlFor="mobile-account">Choose demo account</label><select id="mobile-account" className={`${inputClass} max-w-[150px] px-2 py-2 text-xs lg:hidden`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select><Link href="/demo" className={quietButton}>Switch role</Link><ThemeToggle/><span className="grid size-8 place-items-center rounded-full bg-[#f0efff] text-[10px] font-semibold text-[#4f46e5]">{currentUser.name.split(" ").map((part) => part[0]).join("")}</span></div></header>
-    <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8 sm:py-8"><div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1.5 text-[10px] font-medium text-[#8b92a3]">TechNeeds IGDTUW <span className="mx-1">·</span> Sample workspace</p><h1 className="text-2xl font-semibold tracking-[-.04em] sm:text-[28px]">{pageTitle}, {currentUser.name.split(" ")[0]}<span className="text-[#4f46e5]">.</span></h1><p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#778094]">{role === "mentee" ? "Your goals, learning plan, sessions, and mentor feedback—connected in one place." : role === "mentor" ? "Support your assigned students, turn sessions into next steps, and review work." : "Manage the people, cohorts, and assignments that move your mentorship program forward."}</p></div><span className="rounded-full border border-[#e6e5ff] bg-[#fafaff] px-3 py-1.5 text-[10px] font-semibold text-[#5a52e8]">Fictional demo profiles · saved in this browser</span></div>
+    <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r border-[#e8eaf1] bg-white lg:flex"><div className="flex h-[68px] items-center border-b border-[#eef0f5] px-6"><Brand/></div>{demoMode && <div className="px-4 pt-5"><label className="sr-only" htmlFor="demo-account">Demo account</label><select id="demo-account" className={`${inputClass} px-2.5 text-xs`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></div>}<nav aria-label="Main navigation" className="flex-1 px-3 pt-7"><p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[.13em] text-[#a0a6b5]">Workspace</p>{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} aria-current={section === item.id ? "page" : undefined} className={`mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition ${section === item.id ? "bg-[#f0efff] text-[#4f46e5]" : "text-[#697386] hover:bg-[#f7f8fc] hover:text-[#172033]"}`}><item.icon size={17}/>{item.label}{item.id === "notifications" && unreadCount > 0 && <span className="ml-auto rounded-full bg-[#fff2df] px-1.5 py-0.5 text-[10px] text-[#ba740e]">{unreadCount}</span>}</button>)}</nav><div className="border-t border-[#eef0f5] p-4">{demoMode ? <><div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Demo mode</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Changes are saved in this browser.</p></div><Link href="/demo" className="mt-3 flex items-center gap-2 px-2 text-xs text-[#778094]"><CircleHelp size={15}/> Switch role</Link></> : <div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Authenticated workspace</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Sample dashboard records are not linked to your account yet.</p>{role === "admin" && <Link href="/admin/mentor-invitations" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Invite a mentor</Link>}{showAdminSetup && <Link href="/setup-admin" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Initialize program admin</Link>}</div>}</div></aside>
+    <div className="lg:pl-[248px]"><header className="sticky top-0 z-10 flex min-h-[68px] items-center justify-between gap-3 border-b border-[#e8eaf1] bg-white/95 px-4 backdrop-blur sm:px-8"><div><p className="text-[10px] text-[#9198a8]">{roleMeta[role].title}</p><p className="mt-0.5 text-sm font-semibold text-[#344054]">{title}</p></div><div className="flex items-center gap-2">{demoMode && <><label className="sr-only" htmlFor="mobile-account">Choose demo account</label><select id="mobile-account" className={`${inputClass} max-w-[150px] px-2 py-2 text-xs lg:hidden`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></>}{demoMode ? <Link href="/demo" className={quietButton}>Switch role</Link> : <button type="button" onClick={handleSignOut} className={quietButton}>Sign out</button>}<ThemeToggle/><span className="grid size-8 place-items-center rounded-full bg-[#f0efff] text-[10px] font-semibold text-[#4f46e5]">{currentUser.name.split(" ").map((part) => part[0]).join("")}</span></div></header>
+    <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8 sm:py-8"><div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1.5 text-[10px] font-medium text-[#8b92a3]">TechNeeds IGDTUW <span className="mx-1">·</span> {demoMode ? "Sample workspace" : "Authenticated role"}</p><h1 className="text-2xl font-semibold tracking-[-.04em] sm:text-[28px]">{pageTitle}, {currentUser.name.split(" ")[0]}<span className="text-[#4f46e5]">.</span></h1><p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#778094]">{role === "mentee" ? "Your goals, learning plan, sessions, and mentor feedback—connected in one place." : role === "mentor" ? "Support your assigned students, turn sessions into next steps, and review work." : "Manage the people, cohorts, and assignments that move your mentorship program forward."}</p></div><span className="rounded-full border border-[#e6e5ff] bg-[#fafaff] px-3 py-1.5 text-[10px] font-semibold text-[#5a52e8]">{demoMode ? "Fictional demo profiles · saved in this browser" : "Sample records · not saved to this account"}</span></div>
     <div className="mb-5 flex gap-2 overflow-x-auto pb-1 lg:hidden">{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} className={`${section === item.id ? "bg-[#4f46e5] text-white" : "border border-[#e5e7ef] bg-white text-[#697386]"} shrink-0 rounded-full px-3 py-2 text-[11px] font-semibold`}>{item.label}</button>)}</div>
+    {!demoMode && <div className="mb-4"><Notice>Signed in as {currentUser.email}. This dashboard is still using sample records; changes here are not saved to your account.</Notice></div>}
     {message && <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-[#dcefe7] bg-[#f1fbf6] px-3.5 py-2.5 text-xs text-[#27765e]" role="status">{message}<button className="font-semibold" onClick={() => setMessage("")}>Dismiss</button></div>}
     {!ready && <Notice>Loading your saved demo workspace…</Notice>}
     {ready && <>
@@ -340,7 +360,7 @@ export function Platform({ role }: { role: Role }) {
       {section === "community" && <CommunityHub user={currentUser} data={data} onToggleRsvp={toggleEventRsvp}/>}
       {role === "admin" && section === "notifications" && <Notifications notifications={ownNotifications} data={data} markRead={(id) => setData((old) => ({ ...old, notifications: old.notifications.map((item) => item.id === id ? { ...item, read: true } : item) }))}/>}
     </>}
-    <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e9f0] py-5 text-[10px] text-[#969dad]"><span>Fictional sample profiles and events · No live TechNeeds member records · Saved in this browser</span><button className="text-[#6d7485] underline" onClick={() => { if (window.confirm("Reset this browser’s demo data to the original sample?")) { window.localStorage.removeItem(DEMO_STORAGE_KEY); window.location.reload() } }}>Reset demo data</button></footer></main></div></div>
+    <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e9f0] py-5 text-[10px] text-[#969dad]"><span>{demoMode ? "Fictional sample profiles and events · No live TechNeeds member records · Saved in this browser" : "Authenticated role · Fictional sample records only · Dashboard persistence is the next setup step"}</span>{demoMode && <button className="text-[#6d7485] underline" onClick={() => { if (window.confirm("Reset this browser’s demo data to the original sample?")) { window.localStorage.removeItem(DEMO_STORAGE_KEY); window.location.reload() } }}>Reset demo data</button>}</footer></main></div></div>
 }
 
 function Overview({ role, data, user, roadmap, progress, completed, total, sessions, mentees, unread, go }: { role: Role; data: DemoData; user: UserProfile; roadmap?: Roadmap; progress: number; completed: number; total: number; sessions: MentorshipSession[]; mentees: string[]; unread: number; go: (section: string) => void }) {

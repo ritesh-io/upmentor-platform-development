@@ -12,6 +12,7 @@ const securityHeaders = [
 ]
 
 const nextConfig = {
+  distDir: process.env.UPMENTOR_NEXT_DIST_DIR || ".next",
   images: {
     unoptimized: true,
   },
