@@ -1,2 +1,5 @@
-import { Dashboard } from "@/components/upmentor/dashboard"
-export default function AdminPage() { return <Dashboard role="admin" /> }
+import { Platform } from "@/components/upmentor/platform"
+
+export default function AdminPage() {
+  return <Platform role="admin" />
+}

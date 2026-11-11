@@ -1,2 +1,5 @@
-import { Dashboard } from "@/components/upmentor/dashboard"
-export default function MenteePage() { return <Dashboard role="mentee" /> }
+import { Platform } from "@/components/upmentor/platform"
+
+export default function MenteePage() {
+  return <Platform role="mentee" />
+}
