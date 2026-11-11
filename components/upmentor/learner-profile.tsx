@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import Image from "next/image"
 import { ArrowUpRight, BadgeCheck, BookOpen, CircleUserRound, Flame, LoaderCircle, Sparkles, Trophy } from "lucide-react"
 import type { ProfileInsightsContent } from "@/lib/upmentor-ai-contracts"
 import { LEARNING_RESOURCES, type DemoData, type UserProfile } from "@/lib/upmentor-demo-data"
@@ -47,6 +48,31 @@ function avatarColors(domain: string) {
   if (normalized.includes("ai") || normalized.includes("ml")) return "from-[#665293] to-[#b08eb8]"
   if (normalized.includes("web")) return "from-[#5b6e9a] to-[#97a8c7]"
   return "from-[#73674f] to-[#b6a680]"
+}
+
+type AvatarArtwork = { src: string; label: string }
+
+function avatarArtwork(domain: string, skills: string[]): AvatarArtwork {
+  const profile = `${domain} ${skills.join(" ")}`.toLowerCase()
+  if (/(dsa|algorithm|data structure|c\/c\+\+|competitive programming)/.test(profile)) {
+    return { src: "/avatars/algorithms.png", label: "Algorithms" }
+  }
+  if (/(artificial intelligence|machine learning|\bai\b|\bml\b)/.test(profile)) {
+    return { src: "/avatars/ai-ml.png", label: "AI and machine learning" }
+  }
+  return { src: "/avatars/web-development.png", label: "Web development" }
+}
+
+function ProfileAvatar({ artwork, domain, initials, rank, completed }: { artwork: AvatarArtwork; domain: string; initials: string; rank: number | null; completed: number }) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const engagementRing = rank === 1 ? "ring-2 ring-amber-400" : completed >= 3 ? "ring-2 ring-emerald-400" : "ring-2 ring-violet-400"
+
+  return <div className={`relative grid size-[76px] shrink-0 place-items-center rounded-[24px] bg-gradient-to-br ${avatarColors(domain)} p-[2px] ${engagementRing}`}>
+    {imageFailed
+      ? <span className="grid size-[72px] place-items-center rounded-[21px] bg-[#171e30] text-xl font-semibold text-white">{initials}</span>
+      : <Image src={artwork.src} alt={`AI-generated sample avatar artwork for ${artwork.label} learners`} width={72} height={72} sizes="72px" className="size-[72px] rounded-[21px] object-cover" onError={() => setImageFailed(true)} />}
+    <span className="absolute -bottom-1 -right-1 grid size-7 place-items-center rounded-full border-2 border-white bg-[#f1efff] text-[#5148d7]" aria-hidden="true"><Sparkles size={13}/></span>
+  </div>
 }
 
 export function LearnerProfile({ user, data }: Props) {
@@ -124,6 +150,7 @@ export function LearnerProfile({ user, data }: Props) {
   }
 
   const initials = user.name.split(/\s+/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase()
+  const avatar = avatarArtwork(user.domain, user.skills)
   const roleMetrics = user.role === "mentee"
     ? [{ label: "Resources approved", value: `${completedResources}/${totalResources}` }, { label: "Points earned", value: String(points) }, { label: "Leaderboard rank", value: leaderboardRank ? `#${leaderboardRank}` : "—" }]
     : user.role === "mentor"
@@ -133,11 +160,9 @@ export function LearnerProfile({ user, data }: Props) {
   return <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,.72fr)]">
     <section className="rounded-xl border border-[#e7e9f1] bg-white p-5 shadow-[0_2px_8px_rgba(23,32,51,0.025)] sm:p-7">
       <div className="flex flex-wrap items-center gap-4">
-        <div className={`relative grid size-[76px] shrink-0 place-items-center rounded-[24px] bg-gradient-to-br ${avatarColors(user.domain)} text-xl font-semibold text-white shadow-sm`} aria-label={`${user.domain} interest-based avatar`}>
-          {initials}<span className="absolute -bottom-1 -right-1 grid size-7 place-items-center rounded-full border-2 border-white bg-[#f1efff] text-[#5148d7]"><Sparkles size={13}/></span>
-        </div>
+        <ProfileAvatar key={user.id} artwork={avatar} domain={user.domain} initials={initials} rank={userRank?.rank ?? null} completed={completedResources} />
         <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#7d8597]">Personal learning profile · demo workspace</p><h2 className="mt-1 text-xl font-semibold tracking-[-.03em]">{user.name}</h2><p className="mt-1 text-xs text-[#778094]">{user.role === "mentee" ? "Mentee" : user.role === "mentor" ? "Mentor" : "Program admin"} · {user.domain}</p>{user.enrollmentNumber && <p className="mt-1 text-[10px] text-[#8991a2]">Demo enrollment ID: {user.enrollmentNumber} · not a login credential</p>}</div>
-        <span className="rounded-full border border-[#e7e5ff] bg-[#fafaff] px-2.5 py-1.5 text-[10px] font-semibold text-[#5a52e8]">Interest-based avatar</span>
+        <span className="rounded-full border border-[#e7e5ff] bg-[#fafaff] px-2.5 py-1.5 text-[10px] font-semibold text-[#5a52e8]">AI-generated sample · {avatar.label}</span>
       </div>
       <div className="mt-6 grid gap-3 sm:grid-cols-3">{roleMetrics.map((metric) => <div key={metric.label} className="rounded-lg bg-[#f7f8fc] p-3.5"><p className="text-[10px] text-[#8991a2]">{metric.label}</p><p className="mt-1 text-lg font-semibold">{metric.value}</p></div>)}</div>
       <div className="mt-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Personalized performance summary</h3><p className="mt-1 text-[10px] text-[#8991a2]">Built from approved work, sessions, interests, and current demo activity.</p></div><button className={buttonClass} type="button" onClick={generateInsights} disabled={loading}>{loading ? <LoaderCircle className="animate-spin" size={14}/> : <Sparkles size={14}/>}Generate profile insights</button></div>
@@ -146,7 +171,7 @@ export function LearnerProfile({ user, data }: Props) {
       </div>
       <div className="mt-6"><h3 className="text-sm font-semibold">Interest and progress badges</h3><div className="mt-3 flex flex-wrap gap-2">{badges.length ? badges.map((badge) => <span key={badge.label} className="inline-flex items-center gap-1.5 rounded-full border border-[#e8e7f8] bg-[#f8f7ff] px-2.5 py-1.5 text-[10px] font-medium text-[#5c55ce]">{badge.icon === "progress" ? <Flame size={12}/> : badge.icon === "session" ? <BadgeCheck size={12}/> : <BookOpen size={12}/>} {badge.label}</span>) : <p className="text-xs text-[#8991a2]">Add interest tags during onboarding to personalize this profile.</p>}</div></div>
       <div className="mt-6"><div className="flex items-center gap-2"><BookOpen size={15} className="text-[#6d67c7]"/><h3 className="text-sm font-semibold">Recommended next steps</h3></div>{selectedRecommendations.length ? <ul className="mt-3 flex flex-col gap-2">{selectedRecommendations.map((item) => <li key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#eef0f5] px-3.5 py-3"><div><p className="text-xs font-medium">{item.title}</p><p className="mt-1 text-[10px] text-[#8991a2]">{item.kind === "task" ? "Assigned learning task" : "Curated learning resource"}</p></div>{item.url && <a className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold text-[#5148d7] underline" href={item.url} target="_blank" rel="noreferrer">Open <ArrowUpRight size={12}/></a>}</li>)}</ul> : <p className="mt-3 text-xs text-[#8991a2]">No pending tasks or curated resources match this profile yet.</p>}</div>
-      <p className="mt-6 text-[10px] leading-4 text-[#9299a8]">Fictional demo profile. This avatar is generated from initials and learning interests; it is not a generated photograph or an identity check.</p>
+      <p className="mt-6 text-[10px] leading-4 text-[#9299a8]">Fictional demo profile. Avatar artwork is AI-generated and selected from the profile&apos;s track and interests; it is illustrative and not an identity check.</p>
     </section>
     <div className="flex flex-col gap-5">
       <LeaderboardCard data={data} currentUserId={user.role === "mentee" ? user.id : undefined}/>
