@@ -60,16 +60,27 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
   const sampleUser = seedDemoData.users.find((user) => user.role === role)!
   const accountUser: UserProfile = !demoMode && sessionUser
     ? {
-        ...sampleUser,
         id: sessionUser.id,
         name: sessionUser.name,
         email: sessionUser.email,
-        ...(role === "mentee" ? { domain: "Web Development", skills: [], availabilityHours: 4, weeklyCapacity: 8, learningGoal: "", level: "Beginner", targetDate: undefined, cohortId: undefined } : {}),
+        role,
+        domain: role === "mentee" ? "Web Development" : "",
+        skills: [],
+        availabilityHours: role === "mentee" ? 4 : 0,
+        weeklyCapacity: role === "mentee" ? 8 : 0,
+        ...(role === "mentee" ? { learningGoal: "", level: "Beginner" } : {}),
       }
     : sampleUser
   const initialData: DemoData = demoMode || !sessionUser ? seedDemoData : {
-    ...seedDemoData,
-    users: [...seedDemoData.users.filter((user) => user.role !== role), accountUser],
+    version: 2,
+    users: [accountUser],
+    cohorts: [],
+    events: [],
+    eventRsvps: {},
+    assignments: [],
+    roadmaps: [],
+    sessions: [],
+    notifications: [],
   }
   const [data, setData] = useState<DemoData>(initialData)
   const [ready, setReady] = useState(false)
