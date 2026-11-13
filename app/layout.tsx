@@ -4,7 +4,7 @@ import { UpMentorThemeProvider } from '@/components/upmentor/theme-provider'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'UpMentor for TechNeeds IGDTUW — Mentorship with momentum',
+  title: 'TechNeeds IGDTUW — Mentorship with momentum',
   description: 'A TechNeeds-inspired mentorship workspace for learning roadmaps, mentor follow-ups, community resources, and transparent cohort analytics.',
   generator: 'v0.app',
   icons: {

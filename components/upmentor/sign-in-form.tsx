@@ -64,7 +64,7 @@ export function SignInForm({ nextPath }: { nextPath?: string }) {
         {pending ? "Signing in…" : "Sign in"}
       </button>
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#737c8e]">
-        <span>New to UpMentor? <Link href="/sign-up" className="font-semibold text-[#4f46e5] hover:underline">Create an account</Link></span>
+        <span>New to TechNeeds IGDTUW? <Link href="/sign-up" className="font-semibold text-[#4f46e5] hover:underline">Create an account</Link></span>
         <Link href="/setup-admin" className="font-medium text-[#4f46e5] hover:underline">Admin setup</Link>
       </div>
     </form>
