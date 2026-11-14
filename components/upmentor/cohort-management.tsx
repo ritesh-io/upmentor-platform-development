@@ -15,26 +15,79 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 const dateInput = () => new Date().toISOString().slice(0, 10)
 const id = () => `cohort-${crypto.randomUUID()}`
 
-export function CohortManagement({ data, setData }: { data: DemoData; setData: Dispatch<SetStateAction<DemoData>> }) {
+export function CohortManagement({ data, setData, authenticated = false }: { data: DemoData; setData: Dispatch<SetStateAction<DemoData>>; authenticated?: boolean }) {
   const [name, setName] = useState("")
   const [track, setTrack] = useState("Web Development")
   const [startDate, setStartDate] = useState(dateInput())
   const [leadMentorId, setLeadMentorId] = useState("")
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  const [message, setMessage] = useState("")
   const mentors = data.users.filter((user) => user.role === "mentor")
 
-  const createCohort = (event: FormEvent<HTMLFormElement>) => {
+  const createCohort = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const cohort: Cohort = { id: id(), name: name.trim(), track, startDate, studentIds: [], mentorIds: leadMentorId ? [leadMentorId] : [], demoOnly: true }
-    setData((old) => ({ ...old, cohorts: [...old.cohorts, cohort] }))
-    setName("")
+    if (pending) return
+    setPending(true)
+    setError("")
+    setMessage("")
+    const form = event.currentTarget
+    try {
+      let cohort: Cohort
+      if (authenticated) {
+        const response = await fetch("/api/admin/cohorts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim(), track, startDate, leadMentorId }),
+        })
+        const result = await response.json().catch(() => null) as { cohort?: Cohort; error?: string } | null
+        if (!response.ok || !result?.cohort) throw new Error(result?.error || "The cohort could not be created.")
+        cohort = result.cohort
+        setData((old) => ({ ...old, cohorts: [cohort, ...old.cohorts.filter((item) => item.id !== cohort.id)] }))
+        setMessage("Cohort created and saved to MongoDB.")
+      } else {
+        cohort = { id: id(), name: name.trim(), track, startDate, studentIds: [], mentorIds: leadMentorId ? [leadMentorId] : [], demoOnly: true }
+        setData((old) => ({ ...old, cohorts: [...old.cohorts, cohort] }))
+        setMessage("Demo cohort created in this browser.")
+      }
+      setName("")
+      setLeadMentorId("")
+      form.reset()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The cohort could not be created.")
+    } finally {
+      setPending(false)
+    }
   }
 
-  const addMentor = (cohortId: string, mentorId: string) => {
-    if (!mentorId) return
-    setData((old) => ({
-      ...old,
-      cohorts: old.cohorts.map((cohort) => cohort.id === cohortId ? { ...cohort, mentorIds: Array.from(new Set([...cohort.mentorIds, mentorId])) } : cohort),
-    }))
+  const addMentor = async (cohortId: string, mentorId: string) => {
+    if (!mentorId || pending) return
+    setPending(true)
+    setError("")
+    setMessage("")
+    try {
+      if (authenticated) {
+        const response = await fetch("/api/admin/cohorts", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cohortId, mentorId }),
+        })
+        const result = await response.json().catch(() => null) as { cohort?: Cohort; error?: string } | null
+        if (!response.ok || !result?.cohort) throw new Error(result?.error || "The mentor could not be assigned.")
+        setData((old) => ({ ...old, cohorts: old.cohorts.map((item) => item.id === cohortId ? result.cohort! : item) }))
+        setMessage("Mentor assignment saved to MongoDB.")
+      } else {
+        setData((old) => ({
+          ...old,
+          cohorts: old.cohorts.map((cohort) => cohort.id === cohortId ? { ...cohort, mentorIds: Array.from(new Set([...cohort.mentorIds, mentorId])) } : cohort),
+        }))
+        setMessage("Mentor allocated in the demo.")
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The mentor could not be assigned.")
+    } finally {
+      setPending(false)
+    }
   }
 
   return <div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">
@@ -45,12 +98,14 @@ export function CohortManagement({ data, setData }: { data: DemoData; setData: D
         <Field label="Learning track"><select className={inputClass} value={track} onChange={(event) => setTrack(event.target.value)}><option>Web Development</option><option>DSA in C/C++</option><option>AI/ML</option><option>Other</option></select></Field>
         <Field label="Start date"><input className={inputClass} type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required/></Field>
         <Field label="Lead mentor (optional)"><select className={inputClass} value={leadMentorId} onChange={(event) => setLeadMentorId(event.target.value)}><option value="">Assign later</option>{mentors.map((mentor) => <option key={mentor.id} value={mentor.id}>{mentor.name} · {mentor.domain}</option>)}</select></Field>
-        <button className={`${buttonClass} self-start`} type="submit"><Plus size={14}/> Create program</button>
+        <button className={`${buttonClass} self-start`} type="submit" disabled={pending}><Plus size={14}/> {pending ? "Saving…" : "Create program"}</button>
       </form>
-      <p className="mt-4 rounded-lg bg-[#fafaff] px-3 py-2.5 text-[10px] leading-4 text-[#77738f]">All cohorts shown here are fictional demo records. Creating a cohort does not provision user accounts or login credentials.</p>
+      {error && <p role="alert" className="mt-4 rounded-lg border border-[#f3d4d4] bg-[#fff8f8] px-3 py-2.5 text-xs text-[#a23c3c]">{error}</p>}
+      {message && <p role="status" className="mt-4 rounded-lg border border-[#dcefe7] bg-[#f1fbf6] px-3 py-2.5 text-xs text-[#27765e]">{message}</p>}
+      <p className="mt-4 rounded-lg bg-[#fafaff] px-3 py-2.5 text-[10px] leading-4 text-[#77738f]">{authenticated ? "Cohorts and mentor allocations are stored in MongoDB. Mentee enrollment will be connected in a later phase." : "All cohorts shown here are fictional demo records. Creating a cohort does not provision user accounts or login credentials."}</p>
     </section>
     <section className="rounded-xl border border-[#e7e9f1] bg-white p-5 shadow-[0_2px_8px_rgba(23,32,51,0.025)]">
-      <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Programs and mentor allocation</h2><p className="mt-1 text-[10px] text-[#8991a2]">{data.cohorts.length} demo cohorts</p></div><CalendarDays size={17} className="text-[#655ed2]"/></div>
+      <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Programs and mentor allocation</h2><p className="mt-1 text-[10px] text-[#8991a2]">{data.cohorts.length} {authenticated ? "saved cohorts" : "demo cohorts"}</p></div><CalendarDays size={17} className="text-[#655ed2]"/></div>
       <div className="flex flex-col gap-3">{data.cohorts.map((cohort) => <CohortRow key={cohort.id} cohort={cohort} mentors={mentors} data={data} addMentor={addMentor}/>)}</div>
     </section>
   </div>
