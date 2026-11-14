@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react"
 import { Activity, ArrowRight, Bell, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, CircleHelp, ClipboardList, FileText, LayoutDashboard, Plus, Sparkles, Target, Users } from "lucide-react"
 import { Brand } from "./brand"
 import { authClient } from "@/lib/auth-client"
-import { CommunityHub } from "./community-hub"
+import { CommunityHub, type CohortOption, type ResourceItem } from "./community-hub"
 import { CohortManagement } from "./cohort-management"
 import { LearnerProfile, LeaderboardCard } from "./learner-profile"
 import { MentorMenteeIntake } from "./mentor-mentee-intake"
@@ -55,7 +55,7 @@ function progressOf(roadmap?: Roadmap) {
   return tasks.length ? Math.round(tasks.filter((task) => task.status === "approved").length * 100 / tasks.length) : 0
 }
 
-export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = false, initialAdminData }: { role: Role; mode?: "demo" | "authenticated"; sessionUser?: { id: string; name: string; email: string }; showAdminSetup?: boolean; initialAdminData?: { cohorts: Cohort[]; mentors: UserProfile[]; mentees: UserProfile[] } }) {
+export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = false, initialAdminData, resourceWorkspace }: { role: Role; mode?: "demo" | "authenticated"; sessionUser?: { id: string; name: string; email: string }; showAdminSetup?: boolean; initialAdminData?: { cohorts: Cohort[]; mentors: UserProfile[]; mentees: UserProfile[] }; resourceWorkspace?: { resources: ResourceItem[]; cohorts: CohortOption[] } }) {
   const demoMode = mode === "demo"
   const sampleUser = seedDemoData.users.find((user) => user.role === role)!
   const accountUser: UserProfile = !demoMode && sessionUser
@@ -442,7 +442,7 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
       {role === "admin" && section === "mentors" && <div className="flex flex-col gap-5"><AdminMentors data={data} recommendations={getRecommendations} assign={assignMentor} saveProfile={updateMentorProfile}/><MentorOnboardingForm setData={setData}/></div>}
       {role === "admin" && section === "cohorts" && <CohortManagement data={data} setData={setData} authenticated={!demoMode}/>}
       {section === "profile" && <LearnerProfile user={currentUser} data={data}/>}
-      {section === "community" && <CommunityHub user={currentUser} data={data} onToggleRsvp={toggleEventRsvp}/>}
+      {section === "community" && <CommunityHub user={currentUser} data={data} onToggleRsvp={toggleEventRsvp} initialResources={demoMode ? [] : resourceWorkspace?.resources} cohorts={demoMode ? [] : resourceWorkspace?.cohorts} authenticated={!demoMode}/> }
       {role === "admin" && section === "notifications" && <Notifications notifications={ownNotifications} data={data} markRead={(id) => setData((old) => ({ ...old, notifications: old.notifications.map((item) => item.id === id ? { ...item, read: true } : item) }))}/>}
     </>}
     <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e9f0] py-5 text-[10px] text-[#969dad]"><span>{demoMode ? "Fictional sample profiles and events · No live TechNeeds member records · Saved in this browser" : role === "mentee" ? "Your profile and generated roadmap are saved to your account · Other workflow actions remain sample-only" : role === "admin" ? "Cohorts and mentor allocations persist in MongoDB · Other admin workflows remain sample-only" : "Authenticated account · Dashboard workflow records remain sample-only"}</span>{demoMode && <button className="text-[#6d7485] underline" onClick={() => { if (window.confirm("Reset this browser’s demo data to the original sample?")) { window.localStorage.removeItem(DEMO_STORAGE_KEY); window.location.reload() } }}>Reset demo data</button>}</footer></main></div></div>
