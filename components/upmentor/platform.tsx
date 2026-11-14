@@ -55,7 +55,7 @@ function progressOf(roadmap?: Roadmap) {
   return tasks.length ? Math.round(tasks.filter((task) => task.status === "approved").length * 100 / tasks.length) : 0
 }
 
-export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = false, initialAdminData }: { role: Role; mode?: "demo" | "authenticated"; sessionUser?: { id: string; name: string; email: string }; showAdminSetup?: boolean; initialAdminData?: { cohorts: Cohort[]; mentors: UserProfile[] } }) {
+export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = false, initialAdminData }: { role: Role; mode?: "demo" | "authenticated"; sessionUser?: { id: string; name: string; email: string }; showAdminSetup?: boolean; initialAdminData?: { cohorts: Cohort[]; mentors: UserProfile[]; mentees: UserProfile[] } }) {
   const demoMode = mode === "demo"
   const sampleUser = seedDemoData.users.find((user) => user.role === role)!
   const accountUser: UserProfile = !demoMode && sessionUser
@@ -73,7 +73,7 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
     : sampleUser
   const initialData: DemoData = demoMode || !sessionUser ? seedDemoData : {
     version: 2,
-    users: [accountUser, ...(role === "admin" ? initialAdminData?.mentors ?? [] : [])],
+    users: [accountUser, ...(role === "admin" ? [...(initialAdminData?.mentors ?? []), ...(initialAdminData?.mentees ?? [])] : [])],
     cohorts: role === "admin" ? initialAdminData?.cohorts ?? [] : [],
     events: [],
     eventRsvps: {},
