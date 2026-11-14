@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getRequestPrincipal, hasTrustedOrigin } from "@/lib/auth-roles"
-import { addMentorToProgramCohort, createProgramCohort, getAdminCohortData } from "@/lib/upmentor-cohorts"
+import { addMentorToProgramCohort, createProgramCohort, getAdminCohortData, removeMentorFromProgramCohort } from "@/lib/upmentor-cohorts"
 import { readGuardedJson } from "@/lib/upmentor-api-guard"
 
 export const dynamic = "force-dynamic"
@@ -80,5 +80,22 @@ export async function PATCH(request: Request) {
   } catch (error) {
     console.error("[admin-cohorts] assignment failed", error)
     return NextResponse.json({ error: "The mentor could not be assigned." }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: Request) {
+  if (!hasTrustedOrigin(request)) return NextResponse.json({ error: "Request origin is not allowed." }, { status: 403 })
+  const access = await requireAdmin(request)
+  if ("response" in access) return access.response
+  const guarded = await readGuardedJson(request, assignSchema, "admin-cohorts-remove-mentor")
+  if ("response" in guarded) return guarded.response
+
+  try {
+    const result = await removeMentorFromProgramCohort(guarded.value.cohortId, guarded.value.mentorId)
+    if (result.kind === "cohort-missing") return NextResponse.json({ error: "The cohort no longer exists. Refresh and try again." }, { status: 404 })
+    return NextResponse.json({ cohort: result.cohort })
+  } catch (error) {
+    console.error("[admin-cohorts] mentor removal failed", error)
+    return NextResponse.json({ error: "The mentor could not be removed." }, { status: 500 })
   }
 }

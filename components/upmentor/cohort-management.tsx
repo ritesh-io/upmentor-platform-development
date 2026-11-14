@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from "react"
-import { CalendarDays, Plus, Users } from "lucide-react"
+import { CalendarDays, Plus, UserMinus, Users } from "lucide-react"
 import type { Cohort, DemoData, UserProfile } from "@/lib/upmentor-demo-data"
 
 const inputClass = "w-full rounded-lg border border-[#e4e7ef] bg-white px-3 py-2.5 text-sm text-[#172033] outline-none transition placeholder:text-[#a0a6b5] focus:border-[#8b85ef] focus:ring-2 focus:ring-[#eeedff]"
@@ -60,7 +60,7 @@ export function CohortManagement({ data, setData, authenticated = false }: { dat
     }
   }
 
-  const addMentor = async (cohortId: string, mentorId: string) => {
+  const changeMentorAssignment = async (cohortId: string, mentorId: string, action: "add" | "remove") => {
     if (!mentorId || pending) return
     setPending(true)
     setError("")
@@ -68,23 +68,27 @@ export function CohortManagement({ data, setData, authenticated = false }: { dat
     try {
       if (authenticated) {
         const response = await fetch("/api/admin/cohorts", {
-          method: "PATCH",
+          method: action === "add" ? "PATCH" : "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cohortId, mentorId }),
         })
         const result = await response.json().catch(() => null) as { cohort?: Cohort; error?: string } | null
-        if (!response.ok || !result?.cohort) throw new Error(result?.error || "The mentor could not be assigned.")
+        const verb = action === "add" ? "assigned" : "removed"
+        if (!response.ok || !result?.cohort) throw new Error(result?.error || `The mentor could not be ${verb}.`)
         setData((old) => ({ ...old, cohorts: old.cohorts.map((item) => item.id === cohortId ? result.cohort! : item) }))
-        setMessage("Mentor assignment saved to MongoDB.")
+        setMessage(action === "add" ? "Mentor assignment saved to MongoDB." : "Mentor removal saved to MongoDB.")
       } else {
         setData((old) => ({
           ...old,
-          cohorts: old.cohorts.map((cohort) => cohort.id === cohortId ? { ...cohort, mentorIds: Array.from(new Set([...cohort.mentorIds, mentorId])) } : cohort),
+          cohorts: old.cohorts.map((cohort) => cohort.id === cohortId ? {
+            ...cohort,
+            mentorIds: action === "add" ? Array.from(new Set([...cohort.mentorIds, mentorId])) : cohort.mentorIds.filter((id) => id !== mentorId),
+          } : cohort),
         }))
-        setMessage("Mentor allocated in the demo.")
+        setMessage(action === "add" ? "Mentor allocated in the demo." : "Mentor removed from the demo cohort.")
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The mentor could not be assigned.")
+      setError(cause instanceof Error ? cause.message : "The mentor assignment could not be changed.")
     } finally {
       setPending(false)
     }
@@ -106,19 +110,19 @@ export function CohortManagement({ data, setData, authenticated = false }: { dat
     </section>
     <section className="rounded-xl border border-[#e7e9f1] bg-white p-5 shadow-[0_2px_8px_rgba(23,32,51,0.025)]">
       <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Programs and mentor allocation</h2><p className="mt-1 text-[10px] text-[#8991a2]">{data.cohorts.length} {authenticated ? "saved cohorts" : "demo cohorts"}</p></div><CalendarDays size={17} className="text-[#655ed2]"/></div>
-      <div className="flex flex-col gap-3">{data.cohorts.map((cohort) => <CohortRow key={cohort.id} cohort={cohort} mentors={mentors} data={data} addMentor={addMentor}/>)}</div>
+      <div className="flex flex-col gap-3">{data.cohorts.map((cohort) => <CohortRow key={cohort.id} cohort={cohort} mentors={mentors} data={data} changeMentorAssignment={changeMentorAssignment}/>)}</div>
     </section>
   </div>
 }
 
-function CohortRow({ cohort, mentors, data, addMentor }: { cohort: Cohort; mentors: UserProfile[]; data: DemoData; addMentor: (cohortId: string, mentorId: string) => void }) {
+function CohortRow({ cohort, mentors, data, changeMentorAssignment }: { cohort: Cohort; mentors: UserProfile[]; data: DemoData; changeMentorAssignment: (cohortId: string, mentorId: string, action: "add" | "remove") => void }) {
   const [selectedMentor, setSelectedMentor] = useState("")
   const cohortMentors = mentors.filter((mentor) => cohort.mentorIds.includes(mentor.id))
   const members = data.users.filter((user) => cohort.studentIds.includes(user.id) || user.cohortId === cohort.id)
 
   return <article className="rounded-lg border border-[#eef0f5] p-4">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold">{cohort.name}</p><p className="mt-1 text-[10px] text-[#8991a2]">{cohort.track} · starts {new Date(`${cohort.startDate}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</p></div><span className="inline-flex items-center gap-1 rounded-full bg-[#f1f2f6] px-2 py-1 text-[10px] text-[#697386]"><Users size={11}/>{members.length} mentees</span></div>
-    <div className="mt-3 flex flex-wrap gap-1.5">{cohortMentors.length ? cohortMentors.map((mentor) => <span key={mentor.id} className="rounded-full bg-[#f0efff] px-2.5 py-1 text-[10px] font-medium text-[#5550d6]">{mentor.name}</span>) : <span className="text-[10px] text-[#8991a2]">No mentors allocated</span>}</div>
-    {mentors.length > cohortMentors.length && <form className="mt-3 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); addMentor(cohort.id, selectedMentor); setSelectedMentor("") }}><label className="sr-only" htmlFor={`mentor-${cohort.id}`}>Choose a mentor for {cohort.name}</label><select id={`mentor-${cohort.id}`} className={`${inputClass} min-w-40 flex-1 py-2 text-xs`} value={selectedMentor} onChange={(event) => setSelectedMentor(event.target.value)}><option value="">Add a mentor</option>{mentors.filter((mentor) => !cohort.mentorIds.includes(mentor.id)).map((mentor) => <option key={mentor.id} value={mentor.id}>{mentor.name}</option>)}</select><button className={quietButton} type="submit" disabled={!selectedMentor}><Plus size={13}/> Allocate</button></form>}
+    <div className="mt-3 flex flex-wrap gap-1.5">{cohortMentors.length ? cohortMentors.map((mentor) => <span key={mentor.id} className="inline-flex items-center gap-1 rounded-full bg-[#f0efff] py-1 pl-2.5 pr-1 text-[10px] font-medium text-[#5550d6]">{mentor.name}<button type="button" className="rounded-full p-1 text-[#7772c7] hover:bg-white hover:text-[#a23c3c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8b85ef]" aria-label={`Remove ${mentor.name} from ${cohort.name}`} onClick={() => changeMentorAssignment(cohort.id, mentor.id, "remove")}><UserMinus size={12}/></button></span>) : <span className="text-[10px] text-[#8991a2]">No mentors allocated</span>}</div>
+    {mentors.length > cohortMentors.length && <form className="mt-3 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); changeMentorAssignment(cohort.id, selectedMentor, "add"); setSelectedMentor("") }}><label className="sr-only" htmlFor={`mentor-${cohort.id}`}>Choose a mentor for {cohort.name}</label><select id={`mentor-${cohort.id}`} className={`${inputClass} min-w-40 flex-1 py-2 text-xs`} value={selectedMentor} onChange={(event) => setSelectedMentor(event.target.value)}><option value="">Add a mentor</option>{mentors.filter((mentor) => !cohort.mentorIds.includes(mentor.id)).map((mentor) => <option key={mentor.id} value={mentor.id}>{mentor.name}</option>)}</select><button className={quietButton} type="submit" disabled={!selectedMentor}><Plus size={13}/> Allocate</button></form>}
   </article>
 }

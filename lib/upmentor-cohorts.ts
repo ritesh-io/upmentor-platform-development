@@ -107,3 +107,14 @@ export async function addMentorToProgramCohort(cohortId: string, mentorId: strin
   const record = await cohorts.findOne({ _id: cohortId })
   return record ? { kind: "ok" as const, cohort: toCohort(record) } : { kind: "cohort-missing" as const }
 }
+
+export async function removeMentorFromProgramCohort(cohortId: string, mentorId: string) {
+  await ensureCohortIndexes()
+  const result = await cohorts.updateOne(
+    { _id: cohortId },
+    { $pull: { mentorIds: mentorId }, $set: { updatedAt: new Date() } },
+  )
+  if (!result.matchedCount) return { kind: "cohort-missing" as const }
+  const record = await cohorts.findOne({ _id: cohortId })
+  return record ? { kind: "ok" as const, cohort: toCohort(record) } : { kind: "cohort-missing" as const }
+}
