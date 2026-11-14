@@ -321,22 +321,39 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
     setMessage(`${student.name} added. Demo enrollment ID: ${enrollmentNumber}. This ID is not a login credential; password authentication is not enabled.`)
   }
 
-  const submitTask = (event: FormEvent<HTMLFormElement>, taskId: string, studentId: string) => {
+  const submitTask = async (event: FormEvent<HTMLFormElement>, taskId: string, studentId: string) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const description = String(form.get("description") || "").trim()
     const rawUrl = String(form.get("url") || "").trim()
     const url = rawUrl ? safeHttpsUrl(rawUrl) : ""
-    if (rawUrl && !url) {
-      setMessage("Submission links must be valid HTTPS URLs.")
+    if (!description || (rawUrl && !url)) {
+      setMessage(rawUrl && !url ? "Submission links must be valid HTTPS URLs." : "Add a description before submitting your work.")
       return
     }
-    const submission = { description, url: url || "", submittedAt: new Date().toISOString() }
-    updateTask(taskId, (task) => ({ ...task, status: "submitted", submission }))
-    const assignment = data.assignments.find((item) => item.studentId === studentId)
-    setData((old) => ({ ...old, notifications: assignment ? [notify(assignment.mentorId, `${fullName(old, studentId)} submitted “${old.roadmaps.flatMap((item) => item.stages).flatMap((stage) => stage.tasks).find((task) => task.id === taskId)?.title || "a task"}” for review.`), ...old.notifications] : old.notifications }))
+
+    if (!demoMode) {
+      try {
+        const response = await fetch("/api/mentee-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId, description, url: url || "" }),
+        })
+        const result = await response.json()
+        if (!response.ok || !result.roadmap) throw new Error(result.error || "Your submission could not be saved.")
+        updateRoadmap(studentId, result.roadmap as Roadmap)
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Your submission could not be saved. Please try again.")
+        return
+      }
+    } else {
+      const submission = { description, url: url || "", submittedAt: new Date().toISOString() }
+      updateTask(taskId, (task) => ({ ...task, status: "submitted", submission }))
+      const assignment = data.assignments.find((item) => item.studentId === studentId)
+      setData((old) => ({ ...old, notifications: assignment ? [notify(assignment.mentorId, `${fullName(old, studentId)} submitted “${old.roadmaps.flatMap((item) => item.stages).flatMap((stage) => stage.tasks).find((task) => task.id === taskId)?.title || "a task"}” for review.`), ...old.notifications] : old.notifications }))
+    }
     event.currentTarget.reset()
-    setMessage("Submission sent to your mentor for review.")
+    setMessage("Submission saved and sent to your mentor for review.")
   }
 
   const reviewTask = (taskId: string, studentId: string, outcome: "approved" | "revision", note: string, score: number) => {
