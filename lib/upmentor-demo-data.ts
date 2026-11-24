@@ -47,8 +47,11 @@ export type GeneratedRoadmapContent = {
 export type MentorAssignment = { studentId: string; mentorId: string; assignedAt: string; manual: boolean }
 export type MentorshipSession = {
   id: string
+  cohortId?: string
   mentorId: string
   studentId: string
+  mentorName?: string
+  studentName?: string
   startsAt: string
   agenda: string
   status: "upcoming" | "completed" | "missed"
@@ -59,6 +62,7 @@ export type MentorshipSession = {
   challenges?: string[]
   nextSteps?: string[]
   actionItems: string[]
+  actionItemDeadlines?: Record<string, string>
   summarySource?: "ai" | "simulated" | "manual"
 }
 export type Cohort = { id: string; name: string; track: string; startDate: string; studentIds: string[]; mentorIds: string[]; demoOnly?: boolean }

@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   if (!APP_ROLES.includes(principal.role)) return Response.json({ error: "This account cannot access profile insights." }, { status: 403 })
   if (!hasTrustedOrigin(request)) return Response.json({ error: "Request origin is not allowed." }, { status: 403 })
 
-  const guarded = await readGuardedJson(request, profileInsightsRequestSchema, "profile-insights")
+  const guarded = await readGuardedJson(request, profileInsightsRequestSchema, "profile-insights", principal.user.id)
   if ("response" in guarded) return guarded.response
 
   const input = guarded.value

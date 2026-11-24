@@ -93,32 +93,52 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
 
   useEffect(() => {
     if (!demoMode) {
-      if (role !== "mentee") {
-        setReady(true)
-        return
-      }
       let active = true
-      fetch("/api/mentee-profile", { cache: "no-store" })
-        .then(async (response) => {
-          const result = await response.json()
-          if (!response.ok) throw new Error(result.error || "Your learning profile could not be loaded.")
-          return result
-        })
-        .then((result) => {
-          if (!active || !result.profile || !result.roadmap) return
-          setData((old) => ({
-            ...old,
-            users: [...old.users.filter((user) => user.id !== result.profile.id), result.profile],
-            roadmaps: [...old.roadmaps.filter((roadmap) => roadmap.studentId !== result.profile.id), result.roadmap],
-          }))
-          setRoadmapSource(result.source === "ai" ? "ai" : "simulated")
-        })
-        .catch((error) => {
-          if (active) setMessage(error instanceof Error ? error.message : "Your learning profile could not be loaded.")
-        })
-        .finally(() => {
+      const loadAuthenticatedWorkspace = async () => {
+        try {
+          const [profileResult, sessionResult] = await Promise.all([
+            role === "mentee"
+              ? fetch("/api/mentee-profile", { cache: "no-store" }).then(async (response) => {
+                  const result = await response.json()
+                  if (!response.ok) throw new Error(result.error || "Your learning profile could not be loaded.")
+                  return result
+                })
+              : Promise.resolve(null),
+            role === "mentor" || role === "mentee"
+              ? fetch("/api/mentorship-sessions", { cache: "no-store" }).then(async (response) => {
+                  const result = await response.json()
+                  if (!response.ok) throw new Error(result.error || "Mentorship sessions could not be loaded.")
+                  return result
+                })
+              : Promise.resolve(null),
+          ])
+          if (!active) return
+          if (profileResult?.profile && profileResult.roadmap) {
+            setData((old) => ({
+              ...old,
+              users: [...old.users.filter((user) => user.id !== profileResult.profile.id), profileResult.profile],
+              roadmaps: [...old.roadmaps.filter((roadmap) => roadmap.studentId !== profileResult.profile.id), profileResult.roadmap],
+            }))
+            setRoadmapSource(profileResult.source === "ai" ? "ai" : "simulated")
+          }
+          if (sessionResult) {
+            const relatedUsers = role === "mentor" ? sessionResult.mentees : sessionResult.mentors
+            const relatedIds = new Set(relatedUsers.map((user: UserProfile) => user.id))
+            setData((old) => ({
+              ...old,
+              users: [...old.users.filter((user) => !relatedIds.has(user.id)), ...relatedUsers],
+              sessions: sessionResult.sessions,
+              assignments: sessionResult.assignments,
+              ...(role === "mentor" ? { cohorts: sessionResult.cohorts } : {}),
+            }))
+          }
+        } catch (error) {
+          if (active) setMessage(error instanceof Error ? error.message : "Your account workspace could not be loaded.")
+        } finally {
           if (active) setReady(true)
-        })
+        }
+      }
+      void loadAuthenticatedWorkspace()
       return () => { active = false }
     }
     try {
@@ -147,11 +167,21 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
   const currentUser = data.users.find((user) => user.id === accountId && user.role === role) || data.users.find((user) => user.role === role)!
   const ownRoadmap = data.roadmaps.find((roadmap) => roadmap.studentId === currentUser.id)
   const mentorAssignments = data.assignments.filter((item) => item.mentorId === currentUser.id)
-  const menteeIds = role === "mentee" ? [currentUser.id] : role === "mentor" ? mentorAssignments.map((item) => item.studentId) : data.users.filter((user) => user.role === "mentee").map((user) => user.id)
+  const menteeIds = role === "mentee" ? [currentUser.id] : role === "mentor" ? (demoMode ? mentorAssignments.map((item) => item.studentId) : data.users.filter((user) => user.role === "mentee").map((user) => user.id)) : data.users.filter((user) => user.role === "mentee").map((user) => user.id)
   const ownNotifications = data.notifications.filter((item) => role === "admin" || item.userId === currentUser.id)
   const unreadCount = ownNotifications.filter((item) => !item.read).length
   const title = sections[role].find((item) => item.id === section)?.label || sections[role][0].label
   const notify = (userId: string, text: string) => ({ id: makeId("notice"), userId, message: text, createdAt: new Date().toISOString(), read: false } satisfies AppNotification)
+  const patchSession = async (sessionId: string, payload: Record<string, unknown>) => {
+    const response = await fetch(`/api/mentorship-sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json().catch(() => null) as { session?: MentorshipSession; error?: string } | null
+    if (!response.ok || !result?.session) throw new Error(result?.error || "The session could not be saved.")
+    return result.session
+  }
   const updateTask = (taskId: string, transform: (task: RoadmapTask) => RoadmapTask) => setData((old) => ({ ...old, roadmaps: old.roadmaps.map((roadmap) => ({ ...roadmap, stages: roadmap.stages.map((stage) => ({ ...stage, tasks: stage.tasks.map((task) => task.id === taskId ? transform(task) : task) })) })) }))
   const updateRoadmap = (studentId: string, roadmap: Roadmap) => setData((old) => ({ ...old, roadmaps: [...old.roadmaps.filter((item) => item.studentId !== studentId), roadmap] }))
   const assignedMentor = data.users.find((user) => data.assignments.some((assignment) => assignment.studentId === currentUser.id && assignment.mentorId === user.id))
@@ -238,13 +268,37 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
     setMessage(`${mentor.name} is now assigned to ${student.name}.`)
   }
 
-  const addSession = (event: FormEvent<HTMLFormElement>) => {
+  const addSession = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const form = new FormData(event.currentTarget)
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
     const studentId = String(form.get("studentId"))
-    const session: MentorshipSession = { id: makeId("session"), mentorId: currentUser.id, studentId, startsAt: `${String(form.get("date"))}T${String(form.get("time"))}`, agenda: String(form.get("agenda")), status: "upcoming", actionItems: [] }
-    setData((old) => ({ ...old, sessions: [...old.sessions, session], notifications: [notify(studentId, `${currentUser.name} scheduled a mentorship session for ${day(String(form.get("date")))}.`), ...old.notifications] }))
-    event.currentTarget.reset()
+    const dateValue = String(form.get("date"))
+    const timeValue = String(form.get("time"))
+    const agenda = String(form.get("agenda"))
+
+    if (!demoMode) {
+      try {
+        const startsAt = new Date(`${dateValue}T${timeValue}`).toISOString()
+        const response = await fetch("/api/mentorship-sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ studentId, startsAt, agenda }),
+        })
+        const result = await response.json().catch(() => null) as { session?: MentorshipSession; error?: string } | null
+        if (!response.ok || !result?.session) throw new Error(result?.error || "The session could not be saved.")
+        setData((old) => ({ ...old, sessions: [...old.sessions, result.session!] }))
+        formElement.reset()
+        setMessage("Session scheduled and saved to MongoDB.")
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "The session could not be saved.")
+      }
+      return
+    }
+
+    const session: MentorshipSession = { id: makeId("session"), mentorId: currentUser.id, studentId, startsAt: `${dateValue}T${timeValue}`, agenda, status: "upcoming", actionItems: [] }
+    setData((old) => ({ ...old, sessions: [...old.sessions, session], notifications: [notify(studentId, `${currentUser.name} scheduled a mentorship session for ${day(dateValue)}.`), ...old.notifications] }))
+    formElement.reset()
     setMessage("Session scheduled and student notified.")
   }
 
@@ -368,13 +422,52 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
     setMessage(outcome === "approved" ? "Work approved. Student progress and program analytics are updated." : "Revision requested. The student has been notified.")
   }
 
-  const saveManualSession = (sessionId: string, studentId: string, notes: string) => {
+  const saveSessionAgenda = async (sessionId: string, agenda: string) => {
+    if (demoMode) return
+    try {
+      const updated = await patchSession(sessionId, { action: "update-agenda", agenda })
+      setData((old) => ({ ...old, sessions: old.sessions.map((session) => session.id === sessionId ? updated : session) }))
+      setMessage("Session agenda saved to MongoDB.")
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "The session agenda could not be saved.")
+    }
+  }
+
+  const saveManualSession = async (sessionId: string, studentId: string, notes: string) => {
     if (!notes.trim()) return
+    if (!demoMode) {
+      try {
+        const updated = await patchSession(sessionId, { action: "save-manual-notes", notes })
+        setData((old) => ({ ...old, sessions: old.sessions.map((session) => session.id === sessionId ? updated : session) }))
+        setMessage("Session notes saved to MongoDB. No AI-generated details or tasks were added.")
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "The session notes could not be saved.")
+      }
+      return
+    }
     setData((old) => ({ ...old, sessions: old.sessions.map((session) => session.id === sessionId ? { ...session, status: "completed", notes: notes.trim(), rawNotes: notes.trim(), summarySource: "manual" } : session), notifications: [notify(studentId, `Session notes were added by ${currentUser.name}.`), ...old.notifications] }))
     setMessage("Session notes saved. No AI-generated details or tasks were added.")
   }
 
-  const approveSessionSummary = (sessionId: string, studentId: string, approval: ApprovedSummary) => {
+  const approveSessionSummary = async (sessionId: string, studentId: string, approval: ApprovedSummary) => {
+    if (!demoMode) {
+      try {
+        const updated = await patchSession(sessionId, {
+          action: "approve-summary",
+          rawNotes: approval.rawNotes,
+          content: approval.content,
+          actionItems: approval.actionItems,
+          source: approval.source,
+        })
+        setData((old) => ({ ...old, sessions: old.sessions.map((session) => session.id === sessionId ? updated : session) }))
+        const count = updated.actionItems.length
+        setMessage(count ? `Summary and ${count} approved follow-up item${count === 1 ? "" : "s"} saved with the session.` : "Session summary saved to MongoDB.")
+        return true
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "The approved summary could not be saved.")
+        return false
+      }
+    }
     const summary = approval.content.summaryQuotes.join(" ") || approval.rawNotes.trim()
     let createdTasks = 0
     setData((old) => {
@@ -396,9 +489,20 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
       return { ...old, roadmaps: [...old.roadmaps.filter((roadmap) => roadmap.studentId !== studentId), plan], sessions: old.sessions.map((session) => session.id === sessionId ? { ...session, status: "completed", notes: summary, summary, rawNotes: approval.rawNotes, discussionPoints: approval.content.discussionQuotes, challenges: approval.content.challengeQuotes, nextSteps: approval.content.nextStepQuotes, actionItems, summarySource: approval.source } : session), notifications: [notice, ...old.notifications] }
     })
     setMessage(createdTasks ? `Summary approved; ${createdTasks} selected action item${createdTasks === 1 ? "" : "s"} added to the student roadmap.` : "Session summary approved and saved. No unselected action items were assigned.")
+    return true
   }
 
-  const markSessionMissed = (sessionId: string, studentId: string) => {
+  const markSessionMissed = async (sessionId: string, studentId: string) => {
+    if (!demoMode) {
+      try {
+        const updated = await patchSession(sessionId, { action: "mark-missed" })
+        setData((old) => ({ ...old, sessions: old.sessions.map((session) => session.id === sessionId ? updated : session) }))
+        setMessage("Session marked missed and saved to MongoDB.")
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "The session could not be updated.")
+      }
+      return
+    }
     setData((old) => ({ ...old, sessions: old.sessions.map((session) => session.id === sessionId ? { ...session, status: "missed" } : session), notifications: [notify(studentId, "A mentorship session was marked missed. Reach out to your mentor to schedule a supportive follow-up."), ...old.notifications] }))
     setMessage("Session marked missed; the student was notified and their support signal updated.")
   }
@@ -421,11 +525,11 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
   const nav = sections[role]
 
   return <div className="min-h-screen bg-[#f7f8fc] text-[#172033]">
-    <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r border-[#e8eaf1] bg-white lg:flex"><div className="flex h-[68px] items-center border-b border-[#eef0f5] px-6"><Brand/></div>{demoMode && <div className="px-4 pt-5"><label className="sr-only" htmlFor="demo-account">Demo account</label><select id="demo-account" className={`${inputClass} px-2.5 text-xs`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></div>}<nav aria-label="Main navigation" className="flex-1 px-3 pt-7"><p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[.13em] text-[#a0a6b5]">Workspace</p>{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} aria-current={section === item.id ? "page" : undefined} className={`mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition ${section === item.id ? "bg-[#f0efff] text-[#4f46e5]" : "text-[#697386] hover:bg-[#f7f8fc] hover:text-[#172033]"}`}><item.icon size={17}/>{item.label}{item.id === "notifications" && unreadCount > 0 && <span className="ml-auto rounded-full bg-[#fff2df] px-1.5 py-0.5 text-[10px] text-[#ba740e]">{unreadCount}</span>}</button>)}</nav><div className="border-t border-[#eef0f5] p-4">{demoMode ? <><div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Demo mode</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Changes are saved in this browser.</p></div></> : <div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Authenticated workspace</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Sample dashboard records are not linked to your account yet.</p>{role === "admin" && <Link href="/admin/mentor-invitations" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Invite a mentor</Link>}{showAdminSetup && <Link href="/setup-admin" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Initialize program admin</Link>}</div>}</div></aside>
+    <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r border-[#e8eaf1] bg-white lg:flex"><div className="flex h-[68px] items-center border-b border-[#eef0f5] px-6"><Brand/></div>{demoMode && <div className="px-4 pt-5"><label className="sr-only" htmlFor="demo-account">Demo account</label><select id="demo-account" className={`${inputClass} px-2.5 text-xs`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></div>}<nav aria-label="Main navigation" className="flex-1 px-3 pt-7"><p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[.13em] text-[#a0a6b5]">Workspace</p>{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} aria-current={section === item.id ? "page" : undefined} className={`mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition ${section === item.id ? "bg-[#f0efff] text-[#4f46e5]" : "text-[#697386] hover:bg-[#f7f8fc] hover:text-[#172033]"}`}><item.icon size={17}/>{item.label}{item.id === "notifications" && unreadCount > 0 && <span className="ml-auto rounded-full bg-[#fff2df] px-1.5 py-0.5 text-[10px] text-[#ba740e]">{unreadCount}</span>}</button>)}</nav><div className="border-t border-[#eef0f5] p-4">{demoMode ? <><div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Demo mode</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">Changes are saved in this browser.</p></div></> : <div className="rounded-lg bg-[#f8f8ff] p-3"><p className="text-[10px] font-semibold text-[#5350a3]">Authenticated workspace</p><p className="mt-1 text-[10px] leading-4 text-[#7b8294]">{role === "mentor" ? "Assigned mentees and sessions save to MongoDB." : role === "mentee" ? "Your profile, roadmap, and sessions save to MongoDB." : "Admin cohort assignments save to MongoDB."}</p>{role === "admin" && <Link href="/admin/mentor-invitations" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Invite a mentor</Link>}{showAdminSetup && <Link href="/setup-admin" className="mt-3 block text-[10px] font-semibold text-[#4f46e5] hover:underline">Initialize program admin</Link>}</div>}</div></aside>
     <div className="lg:pl-[248px]"><header className="sticky top-0 z-10 flex min-h-[68px] items-center justify-between gap-3 border-b border-[#e8eaf1] bg-white/95 px-4 backdrop-blur sm:px-8"><div><p className="text-[10px] text-[#9198a8]">{roleMeta[role].title}</p><p className="mt-0.5 text-sm font-semibold text-[#344054]">{title}</p></div><div className="flex items-center gap-2">{demoMode && <><label className="sr-only" htmlFor="mobile-account">Choose demo account</label><select id="mobile-account" className={`${inputClass} max-w-[150px] px-2 py-2 text-xs lg:hidden`} value={currentUser.id} onChange={(event) => setAccountId(event.target.value)}>{data.users.filter((user) => user.role === role).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></>}{!demoMode && <button type="button" onClick={handleSignOut} className={quietButton}>Sign out</button>}<ThemeToggle/><span className="grid size-8 place-items-center rounded-full bg-[#f0efff] text-[10px] font-semibold text-[#4f46e5]">{currentUser.name.split(" ").map((part) => part[0]).join("")}</span></div></header>
-    <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8 sm:py-8"><div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1.5 text-[10px] font-medium text-[#8b92a3]">Upmentor <span className="mx-1">·</span> {demoMode ? "Sample workspace" : "Authenticated role"}</p><h1 className="text-2xl font-semibold tracking-[-.04em] sm:text-[28px]">{pageTitle}, {currentUser.name.split(" ")[0]}<span className="text-[#4f46e5]">.</span></h1><p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#778094]">{role === "mentee" ? "Your goals, learning plan, sessions, and mentor feedback—connected in one place." : role === "mentor" ? "Support your assigned students, turn sessions into next steps, and review work." : "Manage the people, cohorts, and assignments that move your mentorship program forward."}</p></div><span className="rounded-full border border-[#e6e5ff] bg-[#fafaff] px-3 py-1.5 text-[10px] font-semibold text-[#5a52e8]">{demoMode ? "Fictional demo profiles · saved in this browser" : role === "mentee" ? "Mentee profile · MongoDB-backed" : role === "admin" ? "Cohorts · MongoDB-backed" : "Authenticated role · sample workflow data"}</span></div>
+    <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8 sm:py-8"><div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1.5 text-[10px] font-medium text-[#8b92a3]">Upmentor <span className="mx-1">·</span> {demoMode ? "Sample workspace" : "Authenticated role"}</p><h1 className="text-2xl font-semibold tracking-[-.04em] sm:text-[28px]">{pageTitle}, {currentUser.name.split(" ")[0]}<span className="text-[#4f46e5]">.</span></h1><p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#778094]">{role === "mentee" ? "Your goals, learning plan, sessions, and mentor feedback—connected in one place." : role === "mentor" ? "Support your assigned students, turn sessions into next steps, and review work." : "Manage the people, cohorts, and assignments that move your mentorship program forward."}</p></div><span className="rounded-full border border-[#e6e5ff] bg-[#fafaff] px-3 py-1.5 text-[10px] font-semibold text-[#5a52e8]">{demoMode ? "Fictional demo profiles · saved in this browser" : role === "mentee" ? "Mentee profile · MongoDB-backed" : role === "admin" ? "Cohorts · MongoDB-backed" : "Sessions · MongoDB-backed"}</span></div>
     <div className="mb-5 flex gap-2 overflow-x-auto pb-1 lg:hidden">{nav.map((item) => <button key={item.id} onClick={() => setSection(item.id)} className={`${section === item.id ? "bg-[#4f46e5] text-white" : "border border-[#e5e7ef] bg-white text-[#697386]"} shrink-0 rounded-full px-3 py-2 text-[11px] font-semibold`}>{item.label}</button>)}</div>
-    {!demoMode && <div className="mb-4"><Notice>{role === "mentee" ? `Signed in as ${currentUser.email}. Your onboarding profile and roadmap are saved in MongoDB; other workflow records in this view are sample data.` : role === "admin" ? `Signed in as ${currentUser.email}. Cohorts and mentor allocations persist in MongoDB; other admin workflow records remain sample-only.` : `Signed in as ${currentUser.email}. This role view uses sample workflow records that are not saved to your account yet.`}</Notice></div>}
+    {!demoMode && <div className="mb-4"><Notice>{role === "mentee" ? `Signed in as ${currentUser.email}. Your profile, roadmap, and mentorship sessions are saved in MongoDB; other workflow records remain sample data.` : role === "admin" ? `Signed in as ${currentUser.email}. Cohorts and mentor allocations persist in MongoDB; other admin workflow records remain sample-only.` : `Signed in as ${currentUser.email}. Assigned mentees and mentorship sessions are saved in MongoDB; other workflow records remain sample data.`}</Notice></div>}
     {message && <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-[#dcefe7] bg-[#f1fbf6] px-3.5 py-2.5 text-xs text-[#27765e]" role="status">{message}<button className="font-semibold" onClick={() => setMessage("")}>Dismiss</button></div>}
     {!ready && <Notice>{demoMode ? "Loading your saved demo workspace…" : "Loading your account workspace…"}</Notice>}
     {ready && <>
@@ -435,7 +539,7 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
       {role === "mentee" && section === "sessions" && <StudentSessions sessions={activeSessions} data={data}/>}
       {role === "mentee" && section === "notifications" && <Notifications notifications={ownNotifications} data={data} markRead={(id) => setData((old) => ({ ...old, notifications: old.notifications.map((item) => item.id === id ? { ...item, read: true } : item) }))}/>}
       {role === "mentor" && section === "mentees" && <div className="grid gap-5 xl:grid-cols-[1fr_1fr]"><Card title="Assigned students" action={<span className="text-[10px] text-[#8b92a3]">{menteeIds.length} active</span>}>{menteeIds.length ? <div className="flex flex-col gap-3">{menteeIds.map((id) => { const student = data.users.find((item) => item.id === id)!; const roadmap = data.roadmaps.find((item) => item.studentId === id); return <div key={id} className="rounded-lg border border-[#eef0f5] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{student.name}</p><p className="mt-1 text-xs text-[#778094]">{student.domain} · {student.level || "Onboarding not complete"}</p></div><span className="text-xs font-semibold text-[#5550d6]">{progressOf(roadmap)}%</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#eef0f5]"><div className="h-full rounded-full bg-[#5a52e8]" style={{ width: `${progressOf(roadmap)}%` }}/></div><p className="mt-3 text-xs text-[#596275]">{roadmap?.goal || "Waiting for learning goal"}</p><p className="mt-1 text-[10px] text-[#9198a8]">{roadmap?.stages.flatMap((stage) => stage.tasks).filter((task) => task.status === "submitted").length || 0} submissions awaiting review</p></div>})}</div> : <Empty>No students are assigned to you yet. Ask a program admin to make an assignment.</Empty>}</Card><Card title="Assign a task" action={<span className="text-[10px] text-[#8b92a3]">Students receive a notification</span>}><TaskAssignmentForm students={data.users.filter((user) => menteeIds.includes(user.id))} onSubmit={addTask}/></Card><MentorMenteeIntake cohorts={data.cohorts} onSubmit={addMentee}/></div>}
-      {role === "mentor" && section === "sessions" && <MentorSessions user={currentUser} students={data.users.filter((user) => menteeIds.includes(user.id))} sessions={activeSessions} data={data} addSession={addSession} update={(sessionId, transform) => setData((old) => ({ ...old, sessions: old.sessions.map((item) => item.id === sessionId ? transform(item) : item) }))} notify={(studentId, text) => setData((old) => ({ ...old, notifications: [notify(studentId, text), ...old.notifications] }))} saveManual={(sessionId, studentId, notes) => saveManualSession(sessionId, studentId, notes)} approveSummary={(sessionId, studentId, approval) => approveSessionSummary(sessionId, studentId, approval)} markMissed={markSessionMissed}/>}
+      {role === "mentor" && section === "sessions" && <MentorSessions user={currentUser} students={data.users.filter((user) => menteeIds.includes(user.id))} sessions={activeSessions} data={data} authenticated={!demoMode} addSession={addSession} update={(sessionId, transform) => setData((old) => ({ ...old, sessions: old.sessions.map((item) => item.id === sessionId ? transform(item) : item) }))} saveAgenda={saveSessionAgenda} notify={(studentId, text) => setData((old) => ({ ...old, notifications: [notify(studentId, text), ...old.notifications] }))} saveManual={(sessionId, studentId, notes) => saveManualSession(sessionId, studentId, notes)} approveSummary={(sessionId, studentId, approval) => approveSessionSummary(sessionId, studentId, approval)} markMissed={markSessionMissed}/>}
       {role === "mentor" && section === "reviews" && <ReviewQueue data={data} review={reviewTask}/>}
       {role === "mentor" && section === "notifications" && <Notifications notifications={ownNotifications} data={data} markRead={(id) => setData((old) => ({ ...old, notifications: old.notifications.map((item) => item.id === id ? { ...item, read: true } : item) }))}/>}
       {role === "admin" && section === "students" && <AdminStudents data={data} assign={assignMentor} recommendations={getRecommendations}/>}
@@ -445,12 +549,12 @@ export function Platform({ role, mode = "demo", sessionUser, showAdminSetup = fa
       {section === "community" && <CommunityHub user={currentUser} data={data} onToggleRsvp={toggleEventRsvp} initialResources={demoMode ? [] : resourceWorkspace?.resources} cohorts={demoMode ? [] : resourceWorkspace?.cohorts} authenticated={!demoMode}/> }
       {role === "admin" && section === "notifications" && <Notifications notifications={ownNotifications} data={data} markRead={(id) => setData((old) => ({ ...old, notifications: old.notifications.map((item) => item.id === id ? { ...item, read: true } : item) }))}/>}
     </>}
-    <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e9f0] py-5 text-[10px] text-[#969dad]"><span>{demoMode ? "Fictional sample profiles and events · No live TechNeeds member records · Saved in this browser" : role === "mentee" ? "Your profile and generated roadmap are saved to your account · Other workflow actions remain sample-only" : role === "admin" ? "Cohorts and mentor allocations persist in MongoDB · Other admin workflows remain sample-only" : "Authenticated account · Dashboard workflow records remain sample-only"}</span>{demoMode && <button className="text-[#6d7485] underline" onClick={() => { if (window.confirm("Reset this browser’s demo data to the original sample?")) { window.localStorage.removeItem(DEMO_STORAGE_KEY); window.location.reload() } }}>Reset demo data</button>}</footer></main></div></div>
+    <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e9f0] py-5 text-[10px] text-[#969dad]"><span>{demoMode ? "Fictional sample profiles and events · No live TechNeeds member records · Saved in this browser" : role === "mentee" ? "Your profile, roadmap, and mentorship sessions are saved to your account · Other workflow actions remain sample-only" : role === "admin" ? "Cohorts and mentor allocations persist in MongoDB · Other admin workflows remain sample-only" : "Mentorship sessions persist in MongoDB · Other workflow actions remain sample-only"}</span>{demoMode && <button className="text-[#6d7485] underline" onClick={() => { if (window.confirm("Reset this browser’s demo data to the original sample?")) { window.localStorage.removeItem(DEMO_STORAGE_KEY); window.location.reload() } }}>Reset demo data</button>}</footer></main></div></div>
 }
 
 function Overview({ role, data, user, roadmap, progress, completed, total, sessions, mentees, unread, go }: { role: Role; data: DemoData; user: UserProfile; roadmap?: Roadmap; progress: number; completed: number; total: number; sessions: MentorshipSession[]; mentees: string[]; unread: number; go: (section: string) => void }) {
   const upcoming = sessions.filter((session) => session.status === "upcoming" && new Date(session.startsAt).getTime() >= Date.now()).slice(0, 3)
-  if (role === "mentee") return <div className="grid gap-5 xl:grid-cols-[1.45fr_.8fr]"><div className="flex flex-col gap-5"><div className="grid gap-3 sm:grid-cols-3"><Stat label="Roadmap progress" value={`${progress}%`} icon={Target}/><Stat label="Approved tasks" value={`${completed} / ${total}`} icon={CheckCircle2}/><Stat label="Unread updates" value={`${unread}`} icon={Bell}/></div><Card title="Your learning journey" action={<button className="text-xs font-semibold text-[#5a52e8]" onClick={() => go("roadmap")}>Open roadmap <ArrowRight className="inline" size={13}/></button>}>{roadmap ? <><p className="text-sm font-semibold">{roadmap.goal}</p><p className="mt-1 text-xs text-[#8991a2]">{roadmap.domain} · Target {day(roadmap.targetDate)}</p><p className="mt-2 text-[11px] text-[#596275]"><span className="font-semibold">Next step:</span> {roadmap.recommendedNextStep}</p><div className="mt-4 h-2 overflow-hidden rounded-full bg-[#eef0f5]"><div className="h-full rounded-full bg-[#5a52e8]" style={{ width: `${progress}%` }}/></div><div className="mt-4 grid gap-2 sm:grid-cols-3">{roadmap.stages.map((stage) => <div key={stage.id} className="rounded-lg bg-[#f8f8fc] p-3"><p className="text-xs font-semibold">{stage.title}</p><p className="mt-1 text-[10px] text-[#8991a2]">{stage.tasks.filter((task) => task.status === "approved").length}/{stage.tasks.length} tasks approved</p></div>)}</div></> : <div className="flex flex-col items-start gap-3"><p className="text-xs text-[#778094]">Tell us what you want to learn and we’ll build a demo roadmap with stages, milestones, and tasks.</p><button className={buttonClass} onClick={() => go("roadmap")}>Start onboarding <ArrowRight size={14}/></button></div>}</Card></div><div className="flex flex-col gap-5"><Card title="Next session">{upcoming.length ? upcoming.map((session) => <div key={session.id} className="mb-3 rounded-lg bg-[#f8f8ff] p-3 last:mb-0"><p className="text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {new Date(session.startsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p><p className="mt-1 text-xs text-[#697386]">{session.agenda}</p><p className="mt-2 text-[10px] text-[#9299a8]">with {fullName(data, session.mentorId)}</p></div>) : <Empty>No upcoming sessions yet.</Empty>}<button className={`${quietButton} mt-3 w-full`} onClick={() => go("sessions")}>All sessions <ArrowRight size={14}/></button></Card><Card title="Recent feedback">{roadmap?.stages.flatMap((stage) => stage.tasks).filter((task) => task.review).slice(-1).map((task) => <div key={task.id}><p className="text-xs font-medium">{task.title}</p><p className="mt-2 text-xs leading-5 text-[#697386]">{task.review?.note}</p><p className="mt-2 text-[10px] text-[#9299a8]">{day(task.review?.reviewedAt || "")}</p></div>) || <Empty>Feedback will appear here after a mentor reviews your work.</Empty>}</Card></div></div>
+  if (role === "mentee") return <div className="grid gap-5 xl:grid-cols-[1.45fr_.8fr]"><div className="flex flex-col gap-5"><div className="grid gap-3 sm:grid-cols-3"><Stat label="Roadmap progress" value={`${progress}%`} icon={Target}/><Stat label="Approved tasks" value={`${completed} / ${total}`} icon={CheckCircle2}/><Stat label="Unread updates" value={`${unread}`} icon={Bell}/></div><Card title="Your learning journey" action={<button className="text-xs font-semibold text-[#5a52e8]" onClick={() => go("roadmap")}>Open roadmap <ArrowRight className="inline" size={13}/></button>}>{roadmap ? <><p className="text-sm font-semibold">{roadmap.goal}</p><p className="mt-1 text-xs text-[#8991a2]">{roadmap.domain} · Target {day(roadmap.targetDate)}</p><p className="mt-2 text-[11px] text-[#596275]"><span className="font-semibold">Next step:</span> {roadmap.recommendedNextStep}</p><div className="mt-4 h-2 overflow-hidden rounded-full bg-[#eef0f5]"><div className="h-full rounded-full bg-[#5a52e8]" style={{ width: `${progress}%` }}/></div><div className="mt-4 grid gap-2 sm:grid-cols-3">{roadmap.stages.map((stage) => <div key={stage.id} className="rounded-lg bg-[#f8f8fc] p-3"><p className="text-xs font-semibold">{stage.title}</p><p className="mt-1 text-[10px] text-[#8991a2]">{stage.tasks.filter((task) => task.status === "approved").length}/{stage.tasks.length} tasks approved</p></div>)}</div></> : <div className="flex flex-col items-start gap-3"><p className="text-xs text-[#778094]">Tell us what you want to learn and we’ll build a demo roadmap with stages, milestones, and tasks.</p><button className={buttonClass} onClick={() => go("roadmap")}>Start onboarding <ArrowRight size={14}/></button></div>}</Card></div><div className="flex flex-col gap-5"><Card title="Next session">{upcoming.length ? upcoming.map((session) => <div key={session.id} className="mb-3 rounded-lg bg-[#f8f8ff] p-3 last:mb-0"><p className="text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {new Date(session.startsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p><p className="mt-1 text-xs text-[#697386]">{session.agenda}</p><p className="mt-2 text-[10px] text-[#9299a8]">with {session.mentorName || fullName(data, session.mentorId)}</p></div>) : <Empty>No upcoming sessions yet.</Empty>}<button className={`${quietButton} mt-3 w-full`} onClick={() => go("sessions")}>All sessions <ArrowRight size={14}/></button></Card><Card title="Recent feedback">{roadmap?.stages.flatMap((stage) => stage.tasks).filter((task) => task.review).slice(-1).map((task) => <div key={task.id}><p className="text-xs font-medium">{task.title}</p><p className="mt-2 text-xs leading-5 text-[#697386]">{task.review?.note}</p><p className="mt-2 text-[10px] text-[#9299a8]">{day(task.review?.reviewedAt || "")}</p></div>) || <Empty>Feedback will appear here after a mentor reviews your work.</Empty>}</Card></div></div>
   if (role === "mentor") { const reviews = getAllTasks(data).filter(({ task, roadmap }) => mentees.includes(roadmap.studentId) && task.status === "submitted"); return <div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]"><div className="flex flex-col gap-5"><div className="grid gap-3 sm:grid-cols-3"><Stat label="Assigned mentees" value={`${mentees.length}`} icon={Users}/><Stat label="Upcoming sessions" value={`${upcoming.length}`} icon={CalendarDays}/><Stat label="Reviews due" value={`${reviews.length}`} icon={FileText}/></div><Card title="Your mentees" action={<button className="text-xs font-semibold text-[#5a52e8]" onClick={() => go("mentees")}>Manage students <ArrowRight className="inline" size={13}/></button>}>{mentees.length ? <div className="divide-y divide-[#f0f1f5]">{mentees.map((id) => { const student = data.users.find((item) => item.id === id)!; const plan = data.roadmaps.find((item) => item.studentId === id); return <div key={id} className="flex items-center justify-between gap-4 py-3 first:pt-0"><div><p className="text-xs font-semibold">{student.name}</p><p className="mt-1 text-[10px] text-[#8991a2]">{student.domain} · {plan?.goal || "Onboarding pending"}</p></div><span className="text-xs font-semibold text-[#5852d8]">{progressOf(plan)}%</span></div>})}</div> : <Empty>No mentees assigned. Admins can assign students from their workspace.</Empty>}</Card></div><Card title="This week’s sessions" action={<button className="text-xs font-semibold text-[#5a52e8]" onClick={() => go("sessions")}>Open calendar <ArrowRight className="inline" size={13}/></button>}>{upcoming.length ? upcoming.map((session) => <div key={session.id} className="mb-3 rounded-lg border border-[#eef0f5] p-3 last:mb-0"><div className="flex justify-between gap-2"><p className="text-xs font-semibold">{fullName(data, session.studentId)}</p><p className="text-[10px] text-[#777f91]">{day(session.startsAt.slice(0, 10))}</p></div><p className="mt-1 text-xs text-[#697386]">{session.agenda}</p></div>) : <Empty>No upcoming sessions. Schedule one with an assigned mentee.</Empty>}<button className={`${buttonClass} mt-4`} onClick={() => go("sessions")}><Plus size={14}/> Schedule session</button></Card></div> }
   const students = data.users.filter((item) => item.role === "mentee")
   const tasks = getAllTasks(data)
@@ -521,12 +625,12 @@ function StudentSessions({ sessions, data }: { sessions: MentorshipSession[]; da
   const missed = sessions.filter((session) => session.status === "missed" || (session.status === "upcoming" && new Date(session.startsAt).getTime() < Date.now()))
   return <div className="grid gap-5 xl:grid-cols-2">
     <div className="flex flex-col gap-5">
-      <Card title="Upcoming sessions">{upcoming.length ? upcoming.map((session) => <div key={session.id} className="mb-3 rounded-lg border border-[#eef0f5] p-4 last:mb-0"><div className="flex flex-wrap justify-between gap-2"><p className="text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {new Date(session.startsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p><span className="text-[10px] text-[#5a52e8]">with {fullName(data, session.mentorId)}</span></div><p className="mt-3 text-xs text-[#596275]"><strong>Agenda:</strong> {session.agenda}</p></div>) : <Empty>No sessions are scheduled yet.</Empty>}<p className="mt-4 text-[10px] leading-4 text-[#9299a8]">Need a different time? Bring it up with your mentor in your next session.</p></Card>
-      {missed.length > 0 && <Card title="Sessions to follow up"><div className="flex flex-col gap-3">{missed.map((session) => <div key={session.id} className="rounded-lg border border-[#f0ddc0] bg-[#fffaf2] p-3"><p className="text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {fullName(data, session.mentorId)}</p><p className="mt-1 text-xs text-[#697386]">{session.agenda}</p><p className="mt-2 text-[10px] text-[#94681f]">Ask your mentor to find a new time that works.</p></div>)}</div></Card>}
+      <Card title="Upcoming sessions">{upcoming.length ? upcoming.map((session) => <div key={session.id} className="mb-3 rounded-lg border border-[#eef0f5] p-4 last:mb-0"><div className="flex flex-wrap justify-between gap-2"><p className="text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {new Date(session.startsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p><span className="text-[10px] text-[#5a52e8]">with {session.mentorName || fullName(data, session.mentorId)}</span></div><p className="mt-3 text-xs text-[#596275]"><strong>Agenda:</strong> {session.agenda}</p></div>) : <Empty>No sessions are scheduled yet.</Empty>}<p className="mt-4 text-[10px] leading-4 text-[#9299a8]">Need a different time? Bring it up with your mentor in your next session.</p></Card>
+      {missed.length > 0 && <Card title="Sessions to follow up"><div className="flex flex-col gap-3">{missed.map((session) => <div key={session.id} className="rounded-lg border border-[#f0ddc0] bg-[#fffaf2] p-3"><p className="text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {session.mentorName || fullName(data, session.mentorId)}</p><p className="mt-1 text-xs text-[#697386]">{session.agenda}</p><p className="mt-2 text-[10px] text-[#94681f]">Ask your mentor to find a new time that works.</p></div>)}</div></Card>}
     </div>
     <Card title="Session history">{completed.length ? completed.map((session) => {
       const taskDeadlines = new Map(getAllTasks(data).filter(({ task }) => task.sourceSessionId === session.id).map(({ task }) => [task.title, task.deadline]))
-      return <details key={session.id} className="mb-3 rounded-lg border border-[#eef0f5] p-3 last:mb-0"><summary className="cursor-pointer text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {fullName(data, session.mentorId)}<span className="ml-2 rounded-full bg-[#f0efff] px-2 py-0.5 text-[9px] font-medium text-[#5148d7]">{session.summarySource === "ai" ? "AI-assisted · mentor approved" : session.summarySource === "simulated" ? "Simulated · mentor approved" : "Mentor notes"}</span></summary><p className="mt-3 text-xs leading-5 text-[#596275]">{session.summary || session.notes || "No summary was added."}</p>{session.discussionPoints?.length ? <SessionList title="Discussed" items={session.discussionPoints}/> : null}{session.challenges?.length ? <SessionList title="Challenges mentioned" items={session.challenges}/> : null}{session.nextSteps?.length ? <SessionList title="Next steps mentioned" items={session.nextSteps}/> : null}{session.actionItems.length > 0 && <><p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-[#8991a2]">Approved action items</p><ul className="mt-1 list-inside list-disc text-xs leading-6 text-[#596275]">{session.actionItems.map((item) => <li key={item}>{item}{taskDeadlines.has(item) ? ` · Due ${day(taskDeadlines.get(item)!)}` : ""}</li>)}</ul></>}</details>
+      return <details key={session.id} className="mb-3 rounded-lg border border-[#eef0f5] p-3 last:mb-0"><summary className="cursor-pointer text-xs font-semibold">{day(session.startsAt.slice(0, 10))} · {session.mentorName || fullName(data, session.mentorId)}<span className="ml-2 rounded-full bg-[#f0efff] px-2 py-0.5 text-[9px] font-medium text-[#5148d7]">{session.summarySource === "ai" ? "AI-assisted · mentor approved" : session.summarySource === "simulated" ? "Simulated · mentor approved" : "Mentor notes"}</span></summary><p className="mt-3 text-xs leading-5 text-[#596275]">{session.summary || session.notes || "No summary was added."}</p>{session.discussionPoints?.length ? <SessionList title="Discussed" items={session.discussionPoints}/> : null}{session.challenges?.length ? <SessionList title="Challenges mentioned" items={session.challenges}/> : null}{session.nextSteps?.length ? <SessionList title="Next steps mentioned" items={session.nextSteps}/> : null}{session.actionItems.length > 0 && <><p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-[#8991a2]">Approved action items</p><ul className="mt-1 list-inside list-disc text-xs leading-6 text-[#596275]">{session.actionItems.map((item) => <li key={item}>{item}{session.actionItemDeadlines?.[item] || taskDeadlines.has(item) ? ` · Due ${day(session.actionItemDeadlines?.[item] || taskDeadlines.get(item)!)}` : ""}</li>)}</ul></>}</details>
     }) : <Empty>Approved session summaries and action items will appear here.</Empty>}</Card>
   </div>
 }
@@ -545,26 +649,30 @@ function TaskAssignmentForm({ students, onSubmit }: { students: UserProfile[]; o
   </form>
 }
 
-function MentorSessions({ user, students, sessions, data, addSession, update, notify, saveManual, approveSummary, markMissed }: { user: UserProfile; students: UserProfile[]; sessions: MentorshipSession[]; data: DemoData; addSession: (event: FormEvent<HTMLFormElement>) => void; update: (id: string, transform: (session: MentorshipSession) => MentorshipSession) => void; notify: (studentId: string, message: string) => void; saveManual: (sessionId: string, studentId: string, notes: string) => void; approveSummary: (sessionId: string, studentId: string, approval: ApprovedSummary) => void; markMissed: (sessionId: string, studentId: string) => void }) {
+function MentorSessions({ user, students, sessions, data, authenticated, addSession, update, saveAgenda, notify, saveManual, approveSummary, markMissed }: { user: UserProfile; students: UserProfile[]; sessions: MentorshipSession[]; data: DemoData; authenticated: boolean; addSession: (event: FormEvent<HTMLFormElement>) => void | Promise<void>; update: (id: string, transform: (session: MentorshipSession) => MentorshipSession) => void; saveAgenda: (sessionId: string, agenda: string) => void; notify: (studentId: string, message: string) => void; saveManual: (sessionId: string, studentId: string, notes: string) => void | Promise<void>; approveSummary: (sessionId: string, studentId: string, approval: ApprovedSummary) => boolean | Promise<boolean>; markMissed: (sessionId: string, studentId: string) => void | Promise<void> }) {
   const [notes, setNotes] = useState<Record<string, string>>({})
+  const [savingSession, setSavingSession] = useState(false)
 
   return <div className="grid gap-5 xl:grid-cols-[.8fr_1.2fr]">
     <Card title="Schedule a session">
-      <form className="flex flex-col gap-3" onSubmit={addSession}>
+      {students.length ? <form className="flex flex-col gap-3" onSubmit={async (event) => {
+        setSavingSession(true)
+        try { await addSession(event) } finally { setSavingSession(false) }
+      }}>
         <Field label="Mentee"><select className={inputClass} name="studentId" required>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select></Field>
         <Field label="Date"><input className={inputClass} type="date" name="date" required defaultValue={dateInput(3)}/></Field>
         <Field label="Time"><input className={inputClass} type="time" name="time" required defaultValue="10:00"/></Field>
-        <Field label="Agenda"><textarea className={`${inputClass} min-h-24`} name="agenda" required placeholder="What will you work on together?"/></Field>
-        <button className={buttonClass} type="submit"><CalendarDays size={14}/> Schedule and notify</button>
-      </form>
+        <Field label="Agenda"><textarea className={`${inputClass} min-h-24`} name="agenda" required maxLength={2000} placeholder="What will you work on together?"/></Field>
+        <button className={buttonClass} type="submit" disabled={savingSession}><CalendarDays size={14}/>{savingSession ? "Saving…" : authenticated ? "Schedule session" : "Schedule and notify"}</button>
+      </form> : <Empty>No mentees are assigned to you yet. Ask a program admin to make an assignment.</Empty>}
     </Card>
     <Card title="Session notes and history" action={<span className="text-[10px] text-[#8991a2]">AI drafts require mentor approval</span>}>
       {sessions.length ? sessions.map((session) => <article key={session.id} className="mb-4 rounded-lg border border-[#eef0f5] p-4 last:mb-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div><p className="text-xs font-semibold">{fullName(data, session.studentId)} · {day(session.startsAt.slice(0, 10))}</p><p className="mt-1 text-xs text-[#697386]">{session.agenda}</p></div>
+          <div><p className="text-xs font-semibold">{session.studentName || fullName(data, session.studentId)} · {day(session.startsAt.slice(0, 10))}</p><p className="mt-1 text-xs text-[#697386]">{session.agenda}</p></div>
           <span className="rounded-full bg-[#f1f2f6] px-2 py-1 text-[10px] text-[#697386]">{session.status}</span>
         </div>
-        {session.status === "upcoming" && <Field label="Agenda update"><textarea className={`${inputClass} mt-3 min-h-16`} value={session.agenda} onChange={(event) => update(session.id, (old) => ({ ...old, agenda: event.target.value }))}/></Field>}
+        {session.status === "upcoming" && <Field label="Agenda update"><textarea className={`${inputClass} mt-3 min-h-16`} value={session.agenda} onChange={(event) => update(session.id, (old) => ({ ...old, agenda: event.target.value }))} onBlur={() => saveAgenda(session.id, session.agenda)}/></Field>}
         {session.status !== "missed" && <SessionInsightsEditor
           session={session}
           notes={notes[session.id] ?? session.rawNotes ?? session.notes ?? ""}
@@ -572,8 +680,9 @@ function MentorSessions({ user, students, sessions, data, addSession, update, no
           onSaveManual={(value) => saveManual(session.id, session.studentId, value)}
           onApprove={(approval) => approveSummary(session.id, session.studentId, approval)}
           onMarkMissed={() => markMissed(session.id, session.studentId)}
+          persistentWorkspace={authenticated}
         />}
-        {session.actionItems.length > 0 && <ul className="mt-3 list-inside list-disc rounded-lg bg-[#f8f8ff] p-3 text-xs leading-5 text-[#596275]">{session.actionItems.map((item) => <li key={item}>{item}</li>)}</ul>}
+        {session.actionItems.length > 0 && <ul className="mt-3 list-inside list-disc rounded-lg bg-[#f8f8ff] p-3 text-xs leading-5 text-[#596275]">{session.actionItems.map((item) => <li key={item}>{item}{session.actionItemDeadlines?.[item] ? ` · Due ${day(session.actionItemDeadlines[item])}` : ""}</li>)}</ul>}
       </article>) : <Empty>No sessions yet. Schedule one with an assigned mentee.</Empty>}
     </Card>
   </div>

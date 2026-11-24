@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   if (principal.role !== "mentee") return Response.json({ error: "A mentee account is required." }, { status: 403 })
   if (!hasTrustedOrigin(request)) return Response.json({ error: "Request origin is not allowed." }, { status: 403 })
 
-  const guarded = await readGuardedJson(request, roadmapRequestSchema, "roadmap")
+  const guarded = await readGuardedJson(request, roadmapRequestSchema, "roadmap", principal.user.id)
   if ("response" in guarded) return guarded.response
 
   try {
