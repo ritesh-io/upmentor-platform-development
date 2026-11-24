@@ -7,7 +7,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   return (
     <AuthShell
       eyebrow="Welcome back"
-      title="Sign in to TechNeeds IGDTUW"
+      title="Sign in to Upmentor"
       description="Use your enrollment or staff ID, or the email address on your account."
       footer={<>Need an account? <Link href="/sign-up" className="font-semibold text-[#4f46e5] hover:underline">Register as a mentee</Link>. Mentors join by invitation.</>}
     >
