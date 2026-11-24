@@ -1,4 +1,5 @@
 import { generateText, Output } from "ai"
+import { getRequestPrincipal, hasTrustedOrigin } from "@/lib/auth-roles"
 import { roadmapContentSchema, roadmapRequestSchema } from "@/lib/upmentor-ai-contracts"
 import { readGuardedJson } from "@/lib/upmentor-api-guard"
 import { LEARNING_RESOURCES } from "@/lib/upmentor-demo-data"
@@ -6,7 +7,12 @@ import { LEARNING_RESOURCES } from "@/lib/upmentor-demo-data"
 const model = "google/gemini-3.8-flash"
 
 export async function POST(request: Request) {
-  const guarded = await readGuardedJson(request, roadmapRequestSchema, "roadmap")
+  const principal = await getRequestPrincipal(request.headers)
+  if (!principal) return Response.json({ error: "Authentication required." }, { status: 401 })
+  if (principal.role !== "mentee") return Response.json({ error: "A mentee account is required." }, { status: 403 })
+  if (!hasTrustedOrigin(request)) return Response.json({ error: "Request origin is not allowed." }, { status: 403 })
+
+  const guarded = await readGuardedJson(request, roadmapRequestSchema, "roadmap", principal.user.id)
   if ("response" in guarded) return guarded.response
 
   try {

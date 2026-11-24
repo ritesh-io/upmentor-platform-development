@@ -29,6 +29,7 @@ export const roadmapContentSchema = z.object({
 }).strict()
 
 export const sessionSummaryRequestSchema = z.object({
+  sessionId: z.string().trim().min(1).max(160),
   notes: z.string().trim().min(4).max(12000),
 }).strict()
 
@@ -41,6 +42,36 @@ export const sessionInsightsSchema = z.object({
   nextStepQuotes: z.array(quotedTextSchema).max(6),
   actionQuotes: z.array(quotedTextSchema).max(5),
 }).strict()
+
+export const mentorshipSessionCreateSchema = z.object({
+  studentId: z.string().trim().min(1).max(160),
+  startsAt: z.string().datetime(),
+  agenda: z.string().trim().min(4).max(2000),
+}).strict()
+
+const approvedActionItemSchema = z.object({
+  title: z.string().trim().min(2).max(500),
+  deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+    const parsed = new Date(`${value}T00:00:00.000Z`)
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+  }),
+}).strict()
+
+export const mentorshipSessionUpdateSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("update-agenda"), agenda: z.string().trim().min(4).max(2000) }).strict(),
+  z.object({ action: z.literal("mark-missed") }).strict(),
+  z.object({ action: z.literal("save-manual-notes"), notes: z.string().trim().min(4).max(12000) }).strict(),
+  z.object({
+    action: z.literal("approve-summary"),
+    rawNotes: z.string().trim().min(4).max(12000),
+    content: sessionInsightsSchema,
+    actionItems: z.array(approvedActionItemSchema).max(5),
+    source: z.enum(["ai", "simulated"]),
+  }).strict(),
+])
+
+export type MentorshipSessionCreate = z.infer<typeof mentorshipSessionCreateSchema>
+export type MentorshipSessionUpdate = z.infer<typeof mentorshipSessionUpdateSchema>
 
 export const profileInsightsRequestSchema = z.object({
   domain: z.string().trim().min(2).max(80),

@@ -18,9 +18,10 @@ type Props = {
   session: MentorshipSession
   notes: string
   onNotesChange: (value: string) => void
-  onApprove: (summary: ApprovedSummary) => void
+  onApprove: (summary: ApprovedSummary) => boolean | Promise<boolean>
   onSaveManual: (notes: string) => void
   onMarkMissed: () => void
+  persistentWorkspace?: boolean
 }
 
 const inputClass = "w-full rounded-lg border border-[#e4e7ef] bg-white px-3 py-2.5 text-sm text-[#172033] outline-none transition placeholder:text-[#a0a6b5] focus:border-[#8b85ef] focus:ring-2 focus:ring-[#eeedff]"
@@ -35,12 +36,13 @@ const sections: Array<{ key: keyof SessionInsightsContent; title: string }> = [
   { key: "nextStepQuotes", title: "Next steps mentioned" },
 ]
 
-export function SessionInsightsEditor({ session, notes, onNotesChange, onApprove, onSaveManual, onMarkMissed }: Props) {
+export function SessionInsightsEditor({ session, notes, onNotesChange, onApprove, onSaveManual, onMarkMissed, persistentWorkspace = false }: Props) {
   const [content, setContent] = useState<SessionInsightsContent | null>(null)
   const [source, setSource] = useState<DraftSource>("simulated")
   const [selectedActions, setSelectedActions] = useState<number[]>([])
   const [deadlines, setDeadlines] = useState<Record<number, string>>({})
   const [generating, setGenerating] = useState(false)
+  const [savingApproval, setSavingApproval] = useState(false)
   const [error, setError] = useState("")
 
   const generate = async () => {
@@ -54,7 +56,7 @@ export function SessionInsightsEditor({ session, notes, onNotesChange, onApprove
       const response = await fetch("/api/session-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes }),
+        body: JSON.stringify({ sessionId: session.id, notes }),
       })
       const result = await response.json()
       if (!response.ok || !result.insights) throw new Error("Insight generation is unavailable")
@@ -70,15 +72,23 @@ export function SessionInsightsEditor({ session, notes, onNotesChange, onApprove
     }
   }
 
-  const approve = () => {
-    if (!content) return
+  const approve = async () => {
+    if (!content || savingApproval) return
     const actionItems = selectedActions.flatMap((index) => {
       const title = content.actionQuotes[index]?.trim()
       return title ? [{ title, deadline: deadlines[index] || todayInput() }] : []
     })
-    onApprove({ rawNotes: notes, content, actionItems, source })
-    setContent(null)
-    setSelectedActions([])
+    setSavingApproval(true)
+    try {
+      const saved = await onApprove({ rawNotes: notes, content, actionItems, source })
+      if (!saved) return
+      setContent(null)
+      setSelectedActions([])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The approved summary could not be saved.")
+    } finally {
+      setSavingApproval(false)
+    }
   }
 
   const toggleAction = (index: number) => {
@@ -94,7 +104,7 @@ export function SessionInsightsEditor({ session, notes, onNotesChange, onApprove
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold">Session notes and follow-up</p>
-          <p className="mt-1 text-[10px] text-[#7c789b]">Extractive insights only · the mentor approves every task</p>
+          <p className="mt-1 text-[10px] text-[#7c789b]">Extractive insights only · the mentor approves every {persistentWorkspace ? "follow-up item" : "task"}</p>
         </div>
         <button type="button" className={buttonClass} disabled={generating} onClick={generate}>
           {generating ? <LoaderCircle className="animate-spin" size={14}/> : <Sparkles size={14}/>}
@@ -126,21 +136,21 @@ export function SessionInsightsEditor({ session, notes, onNotesChange, onApprove
           <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[#77738f]">Proposed action items</h3>
           {content.actionQuotes.length ? <div className="mt-2 flex flex-col gap-3">{content.actionQuotes.map((quote, index) => <div key={`action-${index}`} className="rounded-lg border border-[#eef0f5] p-3">
             <label className="flex items-start gap-2">
-              <input type="checkbox" checked={selectedActions.includes(index)} onChange={() => toggleAction(index)} className="mt-2 accent-[#4f46e5]" aria-label={`Include action item ${index + 1} as a student task`}/>
+              <input type="checkbox" checked={selectedActions.includes(index)} onChange={() => toggleAction(index)} className="mt-2 accent-[#4f46e5]" aria-label={`Include action item ${index + 1} as a ${persistentWorkspace ? "follow-up item" : "student task"}`}/>
               <textarea className={`${inputClass} min-h-16 resize-y text-xs leading-5`} aria-label={`Edit proposed action item ${index + 1}`} maxLength={500} value={quote} onChange={(event) => updateQuote("actionQuotes", index, event.target.value)}/>
             </label>
             <label className="mt-2 flex flex-col gap-1 text-[10px] font-medium text-[#777f91]">Suggested deadline (editable)
               <input type="date" min={new Date().toISOString().slice(0, 10)} className={`${inputClass} max-w-56 py-2 text-xs`} value={deadlines[index] || new Date(Date.now() + (7 + index * 7) * 86_400_000).toISOString().slice(0, 10)} onChange={(event) => setDeadlines((current) => ({ ...current, [index]: event.target.value }))}/>
             </label>
-          </div>)}</div> : <p className="mt-2 text-xs leading-5 text-[#7d8597]">No explicit action commitments were found. No tasks will be created from this note.</p>}
+          </div>)}</div> : <p className="mt-2 text-xs leading-5 text-[#7d8597]">No explicit action commitments were found. No follow-up items will be saved from this note.</p>}
         </section>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={buttonClass} disabled={!content.summaryQuotes.length && !selectedActions.length} onClick={approve}>
-            <Check size={14}/>{selectedActions.length ? `Approve summary & ${selectedActions.length} task${selectedActions.length === 1 ? "" : "s"}` : "Approve summary"}
+          <button type="button" className={buttonClass} disabled={savingApproval || (!content.summaryQuotes.length && !selectedActions.length)} onClick={approve}>
+            <Check size={14}/>{savingApproval ? "Saving…" : selectedActions.length ? `Approve summary & ${selectedActions.length} ${persistentWorkspace ? "follow-up item" : "task"}${selectedActions.length === 1 ? "" : "s"}` : "Approve summary"}
           </button>
           <button type="button" className={quietButton} onClick={() => { onSaveManual(notes); setContent(null) }}>Save notes only</button>
         </div>
-        <p className="text-[10px] leading-4 text-[#8b92a3]">Only checked action items become student tasks. Unchecked suggestions are never assigned.</p>
+        <p className="text-[10px] leading-4 text-[#8b92a3]">{persistentWorkspace ? "Only checked action items are saved with the session. Unchecked suggestions are never assigned." : "Only checked action items become student tasks. Unchecked suggestions are never assigned."}</p>
       </div>}
     </div>
   )

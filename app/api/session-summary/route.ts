@@ -1,13 +1,28 @@
 import { generateText, Output } from "ai"
+import { getRequestPrincipal, hasTrustedOrigin } from "@/lib/auth-roles"
 import { readGuardedJson } from "@/lib/upmentor-api-guard"
 import { sessionInsightsSchema, sessionSummaryRequestSchema } from "@/lib/upmentor-ai-contracts"
 import { makeRuleBasedSessionInsights, verifySessionInsights } from "@/lib/upmentor-session-insights"
+import { getAuthorizedMentorshipSession } from "@/lib/upmentor-sessions"
 
 const model = "google/gemini-3.8-flash"
 
 export async function POST(request: Request) {
-  const guarded = await readGuardedJson(request, sessionSummaryRequestSchema, "session-summary")
+  const principal = await getRequestPrincipal(request.headers)
+  if (!principal) return Response.json({ error: "Authentication required." }, { status: 401 })
+  if (principal.role !== "mentor") return Response.json({ error: "A mentor account is required." }, { status: 403 })
+  if (!hasTrustedOrigin(request)) return Response.json({ error: "Request origin is not allowed." }, { status: 403 })
+
+  const guarded = await readGuardedJson(request, sessionSummaryRequestSchema, "session-summary", principal.user.id)
   if ("response" in guarded) return guarded.response
+
+  try {
+    const session = await getAuthorizedMentorshipSession(guarded.value.sessionId, principal.user.id)
+    if (!session) return Response.json({ error: "The authorized session could not be found." }, { status: 404 })
+    if (session.status === "missed") return Response.json({ error: "A missed session cannot be summarized." }, { status: 409 })
+  } catch {
+    return Response.json({ error: "Session authorization could not be completed." }, { status: 500 })
+  }
 
   const notes = guarded.value.notes
   try {
