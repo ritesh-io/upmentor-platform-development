@@ -1,4 +1,5 @@
 import { generateText, Output } from "ai"
+import { APP_ROLES, getRequestPrincipal, hasTrustedOrigin } from "@/lib/auth-roles"
 import { profileInsightsRequestSchema, profileInsightsSchema, type ProfileInsightsContent } from "@/lib/upmentor-ai-contracts"
 import { readGuardedJson } from "@/lib/upmentor-api-guard"
 
@@ -13,6 +14,11 @@ function makeSimulatedInsights(input: ReturnType<typeof profileInsightsRequestSc
 }
 
 export async function POST(request: Request) {
+  const principal = await getRequestPrincipal(request.headers)
+  if (!principal) return Response.json({ error: "Authentication required." }, { status: 401 })
+  if (!APP_ROLES.includes(principal.role)) return Response.json({ error: "This account cannot access profile insights." }, { status: 403 })
+  if (!hasTrustedOrigin(request)) return Response.json({ error: "Request origin is not allowed." }, { status: 403 })
+
   const guarded = await readGuardedJson(request, profileInsightsRequestSchema, "profile-insights")
   if ("response" in guarded) return guarded.response
 

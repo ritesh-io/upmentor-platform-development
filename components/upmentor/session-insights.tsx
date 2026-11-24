@@ -54,7 +54,7 @@ export function SessionInsightsEditor({ session, notes, onNotesChange, onApprove
       const response = await fetch("/api/session-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes }),
+        body: JSON.stringify({ sessionId: session.id, notes }),
       })
       const result = await response.json()
       if (!response.ok || !result.insights) throw new Error("Insight generation is unavailable")

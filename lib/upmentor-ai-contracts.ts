@@ -29,6 +29,7 @@ export const roadmapContentSchema = z.object({
 }).strict()
 
 export const sessionSummaryRequestSchema = z.object({
+  sessionId: z.string().trim().min(1).max(160),
   notes: z.string().trim().min(4).max(12000),
 }).strict()
 
